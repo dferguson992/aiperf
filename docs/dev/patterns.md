@@ -180,3 +180,58 @@ def test_with_mock_plugin():
 ```
 
 **Auto-fixtures** (always active): asyncio.sleep runs instantly, RNG=42, singletons reset.
+
+## Uncertainty Plot Pattern
+
+The latency-throughput uncertainty plot uses a one-data-contract, three-renderers architecture.
+
+### Data Contract
+
+```python
+from aiperf.plot.models.uncertainty import BenchmarkPoint, LatencyThroughputUncertaintyData
+
+point = BenchmarkPoint(
+    x_mean=10.0, y_mean=100.0,
+    x_ci_low=8.0, x_ci_high=12.0,
+    y_ci_low=90.0, y_ci_high=110.0,
+    cov_xy=5.0,  # enables rotated ellipses; None for axis-aligned
+    label="concurrency=4",
+)
+data = LatencyThroughputUncertaintyData(
+    points=[point],
+    confidence_level=0.95,
+    title="Latency vs Throughput",
+    x_label="Latency (ms)",
+    y_label="Throughput (tok/s)",
+)
+```
+
+### Plotly Renderer (interactive + Kaleido PNG)
+
+```python
+from aiperf.plot.core.plot_generator import PlotGenerator
+
+pg = PlotGenerator()
+fig = pg.create_uncertainty_plot(data)
+fig.write_image("output.png")  # Kaleido export
+```
+
+### Matplotlib Renderer (code-gen reports)
+
+```python
+from aiperf.plot.exporters import export_uncertainty_matplotlib
+from pathlib import Path
+
+export_uncertainty_matplotlib(data, Path("output.png"))
+```
+
+### Ellipse Geometry Utility
+
+```python
+from aiperf.plot.geometry import compute_ellipse_vertices, compute_axis_aligned_ellipse_vertices
+import numpy as np
+
+cov = np.array([[4.0, 1.0], [1.0, 9.0]])
+vertices = compute_ellipse_vertices(cov, center=(10.0, 100.0), confidence_level=0.95)
+# Returns list of (x, y) tuples forming a closed polygon
+```

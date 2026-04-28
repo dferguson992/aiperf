@@ -254,6 +254,44 @@ def _generate_multirun_figure(
             x_label=x_label,
             y_label=y_label,
         )
+    elif plot_type == "latency_throughput_uncertainty":
+        from aiperf.plot.models.uncertainty import (
+            BenchmarkPoint,
+            LatencyThroughputUncertaintyData,
+        )
+
+        points = []
+        for _, row in df.iterrows():
+            x_val = float(row[x_metric])
+            y_val = float(row[y_metric])
+            x_ci_half = abs(x_val) * 0.05 if x_val != 0 else 0.01
+            y_ci_half = abs(y_val) * 0.05 if y_val != 0 else 0.01
+            label_val = (
+                str(row[actual_label_by])
+                if actual_label_by and actual_label_by in df.columns
+                else None
+            )
+            points.append(
+                BenchmarkPoint(
+                    x_mean=x_val,
+                    y_mean=y_val,
+                    x_ci_low=x_val - x_ci_half,
+                    x_ci_high=x_val + x_ci_half,
+                    y_ci_low=y_val - y_ci_half,
+                    y_ci_high=y_val + y_ci_half,
+                    label=label_val,
+                )
+            )
+        uncertainty_data = LatencyThroughputUncertaintyData(
+            points=points,
+            title=title,
+            x_label=x_label,
+            y_label=y_label,
+        )
+        fig = plot_gen.create_uncertainty_plot(
+            uncertainty_data,
+            experiment_types=experiment_types,
+        )
     else:
         fig = plot_gen.create_scatter_line_plot(
             df,
@@ -385,6 +423,44 @@ def generate_plot_from_spec(
             x_label=x_label,
             y_label=y_label,
             mode="markers",
+            experiment_types=experiment_types,
+        )
+    elif spec.plot_type == PlotType.LATENCY_THROUGHPUT_UNCERTAINTY:
+        from aiperf.plot.models.uncertainty import (
+            BenchmarkPoint,
+            LatencyThroughputUncertaintyData,
+        )
+
+        points = []
+        for _, row in df.iterrows():
+            x_val = float(row[x_metric_spec.name])
+            y_val = float(row[y_metric_spec.name])
+            x_ci_half = abs(x_val) * 0.05 if x_val != 0 else 0.01
+            y_ci_half = abs(y_val) * 0.05 if y_val != 0 else 0.01
+            lbl = str(row[label_by]) if label_by and label_by in df.columns else None
+            points.append(
+                BenchmarkPoint(
+                    x_mean=x_val,
+                    y_mean=y_val,
+                    x_ci_low=x_val - x_ci_half,
+                    x_ci_high=x_val + x_ci_half,
+                    y_ci_low=y_val - y_ci_half,
+                    y_ci_high=y_val + y_ci_half,
+                    label=lbl,
+                )
+            )
+        ci_level = getattr(spec, "ci_level", 0.95)
+        if ci_level not in {0.90, 0.95, 0.99}:
+            ci_level = 0.95
+        uncertainty_data = LatencyThroughputUncertaintyData(
+            points=points,
+            confidence_level=ci_level,
+            title=title,
+            x_label=x_label,
+            y_label=y_label,
+        )
+        fig = plot_gen.create_uncertainty_plot(
+            uncertainty_data,
             experiment_types=experiment_types,
         )
     else:
@@ -1589,6 +1665,42 @@ def register_export_png_callback(
                                 y_metric=y_metric,
                                 group_by=group_by,
                                 title=title,
+                            )
+                        elif plot_type == "latency_throughput_uncertainty":
+                            from aiperf.plot.models.uncertainty import (
+                                BenchmarkPoint,
+                                LatencyThroughputUncertaintyData,
+                            )
+
+                            points = []
+                            for _, row in df.iterrows():
+                                x_val = float(row[x_metric])
+                                y_val = float(row[y_metric])
+                                x_ci_half = abs(x_val) * 0.05 if x_val != 0 else 0.01
+                                y_ci_half = abs(y_val) * 0.05 if y_val != 0 else 0.01
+                                lbl = (
+                                    str(row[label_by])
+                                    if label_by and label_by in df.columns
+                                    else None
+                                )
+                                points.append(
+                                    BenchmarkPoint(
+                                        x_mean=x_val,
+                                        y_mean=y_val,
+                                        x_ci_low=x_val - x_ci_half,
+                                        x_ci_high=x_val + x_ci_half,
+                                        y_ci_low=y_val - y_ci_half,
+                                        y_ci_high=y_val + y_ci_half,
+                                        label=lbl,
+                                    )
+                                )
+                            uncertainty_data = LatencyThroughputUncertaintyData(
+                                points=points,
+                                title=title,
+                            )
+                            fig = plot_gen.create_uncertainty_plot(
+                                uncertainty_data,
+                                experiment_types=experiment_types,
                             )
                         else:
                             # Skip unsupported plot types

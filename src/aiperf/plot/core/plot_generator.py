@@ -32,7 +32,11 @@ from aiperf.plot.constants import (
     PlotTheme,
 )
 from aiperf.plot.core.plot_specs import Style
+from aiperf.plot.geometry import (
+    compute_axis_aligned_ellipse_vertices,
+)
 from aiperf.plot.metric_names import get_gpu_metric_unit, get_metric_display_name
+from aiperf.plot.models.uncertainty import LatencyThroughputUncertaintyData
 
 
 def get_nvidia_color_scheme(
@@ -2120,5 +2124,171 @@ class PlotGenerator:
             showarrow=False,
             font=dict(size=10, color="gray"),
         )
+
+        return fig
+
+    def create_uncertainty_plot(
+        self,
+        data: LatencyThroughputUncertaintyData,
+        experiment_types: dict[str, str] | None = None,
+        group_display_names: dict[str, str] | None = None,
+    ) -> go.Figure:
+        """Create latency-throughput uncertainty plot with error bars and confidence ellipses.
+
+        Renders benchmark operating points as a scatter/line plot with crosshair
+        error bars and shaded confidence ellipses showing joint uncertainty.
+
+        Args:
+            data: Shared data contract with benchmark points and metadata.
+            experiment_types: Optional mapping of experiment type IDs to display names.
+            group_display_names: Optional mapping of group IDs to display names.
+
+        Returns:
+            Plotly Figure with mean-point trace, error bars, and ellipse polygons.
+        """
+        fig = go.Figure()
+        title = data.title or "Latency vs Throughput (Joint Uncertainty)"
+        x_label = data.x_label or "Latency"
+        y_label = data.y_label or "Throughput"
+        layout = self._get_base_layout(title, x_label, y_label)
+        fig.update_layout(layout)
+
+        if not data.points:
+            return fig
+
+        sorted_points = sorted(data.points, key=lambda p: p.x_mean)
+        n = len(sorted_points)
+
+        x_vals = [p.x_mean for p in sorted_points]
+        y_vals = [p.y_mean for p in sorted_points]
+
+        error_x_plus = [p.x_ci_high - p.x_mean for p in sorted_points]
+        error_x_minus = [p.x_mean - p.x_ci_low for p in sorted_points]
+        error_y_plus = [p.y_ci_high - p.y_mean for p in sorted_points]
+        error_y_minus = [p.y_mean - p.y_ci_low for p in sorted_points]
+
+        has_labels = any(p.label is not None for p in sorted_points)
+        mode = "lines+markers" if n > 1 else "markers"
+        if has_labels:
+            mode += "+text"
+
+        mean_trace_kwargs: dict = {
+            "x": x_vals,
+            "y": y_vals,
+            "mode": mode,
+            "marker": {"size": 8, "color": NVIDIA_GREEN},
+            "line": {"color": NVIDIA_GREEN, "width": 2},
+            "error_x": {
+                "type": "data",
+                "symmetric": False,
+                "array": error_x_plus,
+                "arrayminus": error_x_minus,
+            },
+            "error_y": {
+                "type": "data",
+                "symmetric": False,
+                "array": error_y_plus,
+                "arrayminus": error_y_minus,
+            },
+            "name": "Mean",
+            "showlegend": True,
+        }
+
+        if has_labels:
+            mean_trace_kwargs["text"] = [p.label or "" for p in sorted_points]
+            mean_trace_kwargs["textposition"] = "top center"
+
+        fig.add_trace(go.Scatter(**mean_trace_kwargs))
+
+        ellipse_color = NVIDIA_GREEN
+        level_pct = int(data.confidence_level * 100)
+
+        for point in sorted_points:
+            center = (point.x_mean, point.y_mean)
+            x_radius = (point.x_ci_high - point.x_ci_low) / 2
+            y_radius = (point.y_ci_high - point.y_ci_low) / 2
+
+            if point.cov_xy is not None and point.cov_xy != 0:
+                # Use covariance to determine rotation, but keep semi-axes
+                # matching the crosshair lengths (CI half-widths)
+                cov = np.array(
+                    [
+                        [x_radius**2, point.cov_xy],
+                        [point.cov_xy, y_radius**2],
+                    ]
+                )
+                eigenvalues, eigenvectors = np.linalg.eigh(cov)
+                eigenvalues = np.maximum(eigenvalues, 1e-12)
+                theta = np.arctan2(float(eigenvectors[1, 1]), float(eigenvectors[0, 1]))
+                # Semi-axes from eigenvalues (preserves area, adds rotation)
+                a = np.sqrt(float(eigenvalues[1]))
+                b = np.sqrt(float(eigenvalues[0]))
+                cos_t = np.cos(theta)
+                sin_t = np.sin(theta)
+                cx, cy = center
+                n_verts = 64
+                verts = []
+                for i in range(n_verts):
+                    t = 2.0 * np.pi * i / n_verts
+                    xr = a * np.cos(t)
+                    yr = b * np.sin(t)
+                    verts.append(
+                        (
+                            cx + xr * cos_t - yr * sin_t,
+                            cy + xr * sin_t + yr * cos_t,
+                        )
+                    )
+                verts.append(verts[0])
+                vertices = verts
+            else:
+                vertices = compute_axis_aligned_ellipse_vertices(
+                    center, x_radius, y_radius
+                )
+
+            ex = [v[0] for v in vertices]
+            ey = [v[1] for v in vertices]
+
+            # Low-n points get dashed ellipse border and reduced fill opacity
+            is_low_n = point.n_runs is not None and point.n_runs < 3
+            line_dash = "dash" if is_low_n else "solid"
+            fill_opacity = 0.08 if is_low_n else 0.15
+
+            fig.add_trace(
+                go.Scatter(
+                    x=ex,
+                    y=ey,
+                    fill="toself",
+                    fillcolor=f"rgba({int(ellipse_color[1:3], 16)}, {int(ellipse_color[3:5], 16)}, {int(ellipse_color[5:7], 16)}, {fill_opacity})",
+                    line={"color": ellipse_color, "width": 1, "dash": line_dash},
+                    showlegend=False,
+                    hoverinfo="skip",
+                    name="",
+                )
+            )
+
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                marker={"size": 0, "color": ellipse_color},
+                name=f"{level_pct}% Confidence Region",
+                showlegend=True,
+            )
+        )
+
+        # Add legend entry for low-n dashed ellipses if any exist
+        has_low_n = any(p.n_runs is not None and p.n_runs < 3 for p in sorted_points)
+        if has_low_n:
+            fig.add_trace(
+                go.Scatter(
+                    x=[None],
+                    y=[None],
+                    mode="lines",
+                    line={"color": ellipse_color, "width": 1, "dash": "dash"},
+                    name="Low sample (n < 3)",
+                    showlegend=True,
+                )
+            )
 
         return fig

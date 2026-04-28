@@ -97,6 +97,20 @@ visualization:
       groups: [model]
       title: "TTFT vs Throughput"
 
+    latency_throughput_uncertainty:
+      type: latency_throughput_uncertainty
+      description: "Latency vs throughput with joint uncertainty ellipses"
+      x:
+        metric: request_latency
+        stat: avg
+      y:
+        metric: output_token_throughput_per_gpu
+        stat: avg
+      labels: [concurrency]
+      groups: [model]
+      ci_level: 0.95
+      title: "Latency vs Throughput (Joint Uncertainty)"
+
   # =============================================================================
   # SINGLE-RUN PRESETS (time-series over duration of profiling run)
   # =============================================================================
