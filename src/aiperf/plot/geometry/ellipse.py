@@ -33,6 +33,11 @@ def compute_ellipse_vertices(
     Returns:
         List of (x, y) tuples forming a closed polygon (first == last).
     """
+    if n_vertices < 3:
+        raise ValueError(f"n_vertices must be >= 3, got {n_vertices}")
+    if not 0.0 < confidence_level < 1.0:
+        raise ValueError(f"confidence_level must be in (0, 1), got {confidence_level}")
+
     eigenvalues, eigenvectors = np.linalg.eigh(cov)
 
     if np.any(eigenvalues < 0):
@@ -82,6 +87,9 @@ def compute_axis_aligned_ellipse_vertices(
     Returns:
         List of (x, y) tuples forming a closed polygon (first == last).
     """
+    if n_vertices < 3:
+        raise ValueError(f"n_vertices must be >= 3, got {n_vertices}")
+
     cx, cy = center
     vertices: list[tuple[float, float]] = []
     for i in range(n_vertices):

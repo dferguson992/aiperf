@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Data contract models for latency-throughput uncertainty plots."""
 
-from pydantic import Field, field_validator
+from pydantic import Field, ValidationInfo, field_validator
 
 from aiperf.common.models.base_models import AIPerfBaseModel
 
@@ -26,33 +26,34 @@ class BenchmarkPoint(AIPerfBaseModel):
     )
     n_runs: int | None = Field(
         default=None,
+        ge=1,
         description="Number of profiling runs that produced this point; used to flag low-confidence ellipses (n < 3)",
     )
 
     @field_validator("x_ci_low")
     @classmethod
-    def x_ci_low_le_mean(cls, v: float, info) -> float:
+    def x_ci_low_le_mean(cls, v: float, info: ValidationInfo) -> float:
         if "x_mean" in info.data and v > info.data["x_mean"]:
             raise ValueError("x_ci_low must be <= x_mean")
         return v
 
     @field_validator("x_ci_high")
     @classmethod
-    def x_ci_high_ge_mean(cls, v: float, info) -> float:
+    def x_ci_high_ge_mean(cls, v: float, info: ValidationInfo) -> float:
         if "x_mean" in info.data and v < info.data["x_mean"]:
             raise ValueError("x_ci_high must be >= x_mean")
         return v
 
     @field_validator("y_ci_low")
     @classmethod
-    def y_ci_low_le_mean(cls, v: float, info) -> float:
+    def y_ci_low_le_mean(cls, v: float, info: ValidationInfo) -> float:
         if "y_mean" in info.data and v > info.data["y_mean"]:
             raise ValueError("y_ci_low must be <= y_mean")
         return v
 
     @field_validator("y_ci_high")
     @classmethod
-    def y_ci_high_ge_mean(cls, v: float, info) -> float:
+    def y_ci_high_ge_mean(cls, v: float, info: ValidationInfo) -> float:
         if "y_mean" in info.data and v < info.data["y_mean"]:
             raise ValueError("y_ci_high must be >= y_mean")
         return v

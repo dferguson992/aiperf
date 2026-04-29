@@ -39,7 +39,9 @@ def export_uncertainty_matplotlib(
         The output_path that was written.
     """
     fig = render_matplotlib_uncertainty(data, theme)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(str(output_path), dpi=dpi, bbox_inches="tight")
-    plt.close(fig)
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(str(output_path), dpi=dpi, bbox_inches="tight")
+    finally:
+        plt.close(fig)
     return output_path

@@ -255,35 +255,69 @@ def _generate_multirun_figure(
             y_label=y_label,
         )
     elif plot_type == "latency_throughput_uncertainty":
+        import numpy as np
+        from scipy import stats as scipy_stats
+
         from aiperf.plot.models.uncertainty import (
             BenchmarkPoint,
             LatencyThroughputUncertaintyData,
         )
 
+        ci_level = plot_config_dict.get("ci_level", 0.95)
+        if ci_level not in {0.90, 0.95, 0.99}:
+            ci_level = 0.95
+
+        # Group by the operating-point key (e.g., concurrency) to aggregate repeated runs
+        group_col = actual_group_by or (
+            "concurrency" if "concurrency" in df.columns else None
+        )
+
+        if group_col and group_col in df.columns:
+            groups = sorted(df[group_col].unique())
+        else:
+            groups = [None]
+
         points = []
-        for _, row in df.iterrows():
-            x_val = float(row[x_metric])
-            y_val = float(row[y_metric])
-            x_ci_half = abs(x_val) * 0.05 if x_val != 0 else 0.01
-            y_ci_half = abs(y_val) * 0.05 if y_val != 0 else 0.01
-            label_val = (
-                str(row[actual_label_by])
-                if actual_label_by and actual_label_by in df.columns
-                else None
-            )
+        for group in groups:
+            group_df = df[df[group_col] == group] if group is not None else df
+
+            x_vals = group_df[x_metric].values.astype(float)
+            y_vals = group_df[y_metric].values.astype(float)
+            n = len(x_vals)
+
+            x_mean = float(np.mean(x_vals))
+            y_mean = float(np.mean(y_vals))
+
+            if n >= 2:
+                t_crit = scipy_stats.t.ppf((1 + ci_level) / 2, df=n - 1)
+                x_se = float(np.std(x_vals, ddof=1) / np.sqrt(n))
+                y_se = float(np.std(y_vals, ddof=1) / np.sqrt(n))
+                x_ci_half = t_crit * x_se
+                y_ci_half = t_crit * y_se
+            else:
+                x_ci_half = 0.0
+                y_ci_half = 0.0
+
+            label_val = None
+            if actual_label_by and actual_label_by in group_df.columns:
+                label_val = str(group_df[actual_label_by].mode().iloc[0])
+
             points.append(
                 BenchmarkPoint(
-                    x_mean=x_val,
-                    y_mean=y_val,
-                    x_ci_low=x_val - x_ci_half,
-                    x_ci_high=x_val + x_ci_half,
-                    y_ci_low=y_val - y_ci_half,
-                    y_ci_high=y_val + y_ci_half,
+                    x_mean=x_mean,
+                    y_mean=y_mean,
+                    x_ci_low=x_mean - x_ci_half,
+                    x_ci_high=x_mean + x_ci_half,
+                    y_ci_low=y_mean - y_ci_half,
+                    y_ci_high=y_mean + y_ci_half,
                     label=label_val,
+                    n_runs=n,
                 )
             )
+
         uncertainty_data = LatencyThroughputUncertaintyData(
             points=points,
+            confidence_level=ci_level,
             title=title,
             x_label=x_label,
             y_label=y_label,

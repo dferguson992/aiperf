@@ -6,7 +6,7 @@
 from pathlib import Path
 
 import orjson
-from pydantic import Field
+from pydantic import Field, ValidationError
 
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import AIPerfBaseModel
@@ -102,7 +102,7 @@ class AggregateDataLoader(AIPerfLoggerMixin):
                 continue
             try:
                 parsed_metrics[name] = ConfidenceMetricData(**entry)
-            except Exception as e:
+            except ValidationError as e:
                 self.warning(
                     lambda name=name, e=e: f"Skipping malformed metric '{name}': {e}"
                 )
@@ -116,7 +116,7 @@ class AggregateDataLoader(AIPerfLoggerMixin):
                 run_labels=metadata.get("run_labels", []),
                 metrics=parsed_metrics,
             )
-        except Exception as e:
+        except ValidationError as e:
             self.warning(
                 lambda e=e: f"Failed to construct AggregateConfidenceData: {e}"
             )

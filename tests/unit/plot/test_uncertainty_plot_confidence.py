@@ -1088,6 +1088,8 @@ class TestMatplotlibRendererSortedMeanLineWithErrorBars:
         x_vals = list(mean_line.get_xdata())
         assert x_vals == sorted(x_vals), f"x-values not sorted: {x_vals}"
 
+        plt.close(fig)
+
     @given(data=valid_uncertainty_data(min_points=1))
     @settings(max_examples=100, deadline=None)
     def test_errorbar_asymmetric_values_match_ci_bounds(
@@ -1213,11 +1215,12 @@ class TestMatplotlibRendererOneEllipsePatchPerPoint:
         for i, (patch, point) in enumerate(
             zip(ellipse_patches, sorted_points, strict=True)
         ):
-            if point.cov_xy is not None and point.cov_xy != 0:
-                # Rotation may be non-zero (depends on covariance structure)
-                pass
+            if point.cov_xy is not None and abs(point.cov_xy) > 1e-6:
+                assert not math.isclose(patch.angle, 0.0, abs_tol=1e-6), (
+                    f"Ellipse {i} has near-zero angle={patch.angle} with cov_xy={point.cov_xy}"
+                )
             else:
-                assert patch.angle == 0.0, (
+                assert math.isclose(patch.angle, 0.0, abs_tol=1e-6), (
                     f"Ellipse {i} has angle={patch.angle} but cov_xy is None/zero"
                 )
 

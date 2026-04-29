@@ -143,21 +143,17 @@ def render_matplotlib_uncertainty(
         y_half = (point.y_ci_high - point.y_ci_low) / 2.0
 
         if point.cov_xy is not None and point.cov_xy != 0:
-            # Use covariance for rotation, semi-axes from CI bounds directly
-            cov = np.array(
-                [
-                    [x_half**2, point.cov_xy],
-                    [point.cov_xy, y_half**2],
-                ]
+            width, height, angle = _ellipse_params_from_covariance(
+                point_cov_xy=point.cov_xy,
+                x_half_width=x_half,
+                y_half_width=y_half,
+                confidence_level=data.confidence_level,
             )
-            eigenvalues, eigenvectors = np.linalg.eigh(cov)
-            eigenvalues = np.maximum(eigenvalues, 1e-12)
-            width = 2.0 * math.sqrt(float(eigenvalues[1]))
-            height = 2.0 * math.sqrt(float(eigenvalues[0]))
-            angle_rad = math.atan2(float(eigenvectors[1, 1]), float(eigenvectors[0, 1]))
-            angle = math.degrees(angle_rad)
         else:
-            width, height, angle = 2.0 * x_half, 2.0 * y_half, 0.0
+            width, height, angle = _ellipse_params_axis_aligned(
+                x_half_width=x_half,
+                y_half_width=y_half,
+            )
 
         # Low-n points get dashed border and reduced opacity
         is_low_n = point.n_runs is not None and point.n_runs < 3

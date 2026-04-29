@@ -247,18 +247,21 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
         if ci_level not in {0.90, 0.95, 0.99}:
             ci_level = 0.95
 
-        group_by = spec.group_by
+        group_by = "concurrency" if "concurrency" in data.columns else spec.group_by
         label_by = spec.label_by
 
         groups: list[str | None]
         if group_by and group_by in data.columns:
-            groups = sorted(data[group_by].unique())
+            groups = sorted(data[group_by].dropna().unique())
         else:
             groups = [None]
 
         points: list[BenchmarkPoint] = []
         for group in groups:
             group_df = data[data[group_by] == group] if group is not None else data
+
+            if group_df.empty:
+                continue
 
             import numpy as np
             from scipy import stats as scipy_stats
@@ -276,18 +279,16 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
                 y_se = float(np.std(y_vals, ddof=1) / np.sqrt(n))
                 x_ci_half = t_crit * x_se
                 y_ci_half = t_crit * y_se
-                # Covariance disabled: axis-aligned ellipses match crosshairs exactly
                 cov_xy = None
             else:
-                # Single run: no CI computable
                 x_ci_half = 0.0
                 y_ci_half = 0.0
                 cov_xy = None
 
             label_val = None
             if label_by and label_by in group_df.columns:
-                # Use the most common label value in the group (e.g., concurrency)
-                label_val = str(group_df[label_by].mode().iloc[0])
+                label_mode = group_df[label_by].dropna().mode()
+                label_val = str(label_mode.iloc[0]) if not label_mode.empty else None
 
             points.append(
                 BenchmarkPoint(
