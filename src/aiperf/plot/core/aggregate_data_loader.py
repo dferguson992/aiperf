@@ -22,7 +22,9 @@ class ConfidenceMetricData(AIPerfBaseModel):
     std: float = Field(description="Sample standard deviation")
     min: float = Field(description="Minimum value across runs")
     max: float = Field(description="Maximum value across runs")
-    cv: float | None = Field(description="Coefficient of variation (std/mean)")
+    cv: float | None = Field(
+        default=None, description="Coefficient of variation (std/mean)"
+    )
     se: float = Field(description="Standard error")
     ci_low: float = Field(description="Lower bound of confidence interval")
     ci_high: float = Field(description="Upper bound of confidence interval")

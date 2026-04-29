@@ -428,13 +428,15 @@ def generate_plot_from_spec(
         ci_level = getattr(spec, "ci_level", 0.95)
         if ci_level not in {0.90, 0.95, 0.99}:
             ci_level = 0.95
+        resolved_group_by = group_by[0] if isinstance(group_by, list) else group_by
+        resolved_label_by = label_by[0] if isinstance(label_by, list) else label_by
         fig = _build_uncertainty_figure(
             df,
             x_metric_spec.name,
             y_metric_spec.name,
             plot_gen,
-            actual_group_by=group_by,
-            actual_label_by=label_by,
+            actual_group_by=resolved_group_by,
+            actual_label_by=resolved_label_by,
             plot_config_dict={"ci_level": ci_level},
             title=title,
             x_label=x_label,
