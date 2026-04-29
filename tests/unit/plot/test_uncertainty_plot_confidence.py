@@ -772,7 +772,9 @@ def valid_uncertainty_data(
     # Ensure distinct x_mean values so sorted-order assertions are deterministic
     x_means = draw(
         st.lists(
-            st.floats(min_value=-1e3, max_value=1e3, allow_nan=False, allow_infinity=False),
+            st.floats(
+                min_value=-1e3, max_value=1e3, allow_nan=False, allow_infinity=False
+            ),
             min_size=n,
             max_size=n,
             unique=True,
