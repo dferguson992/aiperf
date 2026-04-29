@@ -70,7 +70,7 @@ class AggregateDataLoader(AIPerfLoggerMixin):
 
         return self._parse_aggregate(raw)
 
-    def _parse_aggregate(self, raw: dict) -> AggregateConfidenceData | None:
+    def _parse_aggregate(self, raw: object) -> AggregateConfidenceData | None:
         """Parse raw JSON dict into AggregateConfidenceData.
 
         Args:

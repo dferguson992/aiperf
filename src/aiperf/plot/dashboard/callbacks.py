@@ -134,55 +134,78 @@ def _get_current_theme(theme_data: dict, default_theme: PlotTheme) -> PlotTheme:
     return PlotTheme(theme_str)
 
 
-def _generate_multirun_figure(
+def _build_uncertainty_figure(
+    df: pd.DataFrame,
+    x_metric: str,
+    y_metric: str,
+    plot_gen: PlotGenerator,
+    *,
+    actual_group_by: str | None,
+    actual_label_by: str | None,
+    plot_config_dict: dict,
+    title: str,
+    x_label: str,
+    y_label: str,
+    experiment_types: dict[str, str] | None,
+) -> go.Figure:
+    """Build an uncertainty figure from grouped DataFrame with t-based CIs."""
+    from aiperf.plot.handlers.multi_run_handlers import _build_uncertainty_points
+    from aiperf.plot.models.uncertainty import LatencyThroughputUncertaintyData
+
+    ci_level = plot_config_dict.get("ci_level", 0.95)
+    if ci_level not in {0.90, 0.95, 0.99}:
+        ci_level = 0.95
+
+    group_col = actual_group_by or (
+        "concurrency" if "concurrency" in df.columns else None
+    )
+    points = _build_uncertainty_points(
+        df,
+        x_metric,
+        y_metric,
+        group_col=group_col,
+        label_col=actual_label_by,
+        ci_level=ci_level,
+    )
+    uncertainty_data = LatencyThroughputUncertaintyData(
+        points=points,
+        confidence_level=ci_level,
+        title=title,
+        x_label=x_label,
+        y_label=y_label,
+    )
+    return plot_gen.create_uncertainty_plot(
+        uncertainty_data,
+        experiment_types=experiment_types,
+    )
+
+
+def _prepare_multirun_context(
     filtered_runs: list[RunData],
     plot_config_dict: dict,
-    theme: PlotTheme,
-) -> tuple[go.Figure | None, list[str]]:
-    """
-    Generate a multi-run plot figure for the specified theme.
-
-    This helper function encapsulates the plot generation logic so it can be
-    called for both current and opposite themes during caching.
-
-    Args:
-        filtered_runs: List of RunData objects (already filtered by selection)
-        plot_config_dict: Plot configuration dictionary
-        theme: Theme to use for plot generation
+) -> dict | None:
+    """Extract config, build DataFrame, and resolve labels/groups for multi-run plots.
 
     Returns:
-        Tuple of (figure or None, list of warnings)
+        Context dict with all resolved values, or None if DataFrame is empty.
     """
-    plot_gen = _get_plot_generator(theme)
-
     x_metric = plot_config_dict.get("x_metric")
     x_stat = plot_config_dict.get("x_stat", "p50")
     y_metric = plot_config_dict.get("y_metric")
     y_stat = plot_config_dict.get("y_stat", "avg")
-    log_scale = plot_config_dict.get("log_scale", "none")
-    autoscale = plot_config_dict.get("autoscale", "none")
-    plot_type = plot_config_dict.get("plot_type", "scatter_line")
-    label_by = plot_config_dict.get("label_by", "concurrency")
-    group_by = plot_config_dict.get("group_by", "model")
-    title = plot_config_dict.get(
-        "title", plot_config_dict.get("plot_id", "Plot").replace("-", " ").title()
-    )
 
     result = runs_to_dataframe(filtered_runs, x_metric, x_stat, y_metric, y_stat)
     df = result["df"]
-    x_stat_actual = result["x_stat_actual"]
-    y_stat_actual = result["y_stat_actual"]
-    plot_warnings = result["warnings"]
-
     if df.empty:
-        return None, plot_warnings
+        return None
 
+    label_by = plot_config_dict.get("label_by", "concurrency")
+    group_by = plot_config_dict.get("group_by", "model")
     actual_label_by = None if label_by == "none" else label_by
     actual_group_by = None if group_by == "none" else group_by
 
     if actual_label_by and actual_label_by not in df.columns:
         actual_label_by = "concurrency" if "concurrency" in df.columns else None
-
     if actual_group_by and actual_group_by not in df.columns:
         actual_group_by = "model" if "model" in df.columns else None
 
@@ -197,163 +220,110 @@ def _generate_multirun_figure(
             for g in df[actual_group_by].unique()
         }
 
-    x_label = (
-        plot_config_dict.get("x_label")
-        or f"{get_metric_display_name(x_metric)} ({x_stat_actual})"
-    )
-    y_label = (
-        plot_config_dict.get("y_label")
-        or f"{get_metric_display_name(y_metric)} ({y_stat_actual})"
-    )
+    return {
+        "df": df,
+        "x_metric": x_metric,
+        "y_metric": y_metric,
+        "actual_label_by": actual_label_by,
+        "actual_group_by": actual_group_by,
+        "experiment_types": experiment_types,
+        "warnings": result["warnings"],
+        "title": plot_config_dict.get(
+            "title", plot_config_dict.get("plot_id", "Plot").replace("-", " ").title()
+        ),
+        "x_label": (
+            plot_config_dict.get("x_label")
+            or f"{get_metric_display_name(x_metric)} ({result['x_stat_actual']})"
+        ),
+        "y_label": (
+            plot_config_dict.get("y_label")
+            or f"{get_metric_display_name(y_metric)} ({result['y_stat_actual']})"
+        ),
+    }
+
+
+def _generate_multirun_figure(
+    filtered_runs: list[RunData],
+    plot_config_dict: dict,
+    theme: PlotTheme,
+) -> tuple[go.Figure | None, list[str]]:
+    """Generate a multi-run plot figure for the specified theme."""
+    ctx = _prepare_multirun_context(filtered_runs, plot_config_dict)
+    if ctx is None:
+        return None, runs_to_dataframe(
+            filtered_runs,
+            plot_config_dict.get("x_metric"),
+            plot_config_dict.get("x_stat", "p50"),
+            plot_config_dict.get("y_metric"),
+            plot_config_dict.get("y_stat", "avg"),
+        )["warnings"]
+
+    plot_gen = _get_plot_generator(theme)
+    plot_type = plot_config_dict.get("plot_type", "scatter_line")
+    df = ctx["df"]
+    common = {
+        "label_by": ctx["actual_label_by"],
+        "group_by": ctx["actual_group_by"],
+        "title": ctx["title"],
+        "x_label": ctx["x_label"],
+        "y_label": ctx["y_label"],
+        "experiment_types": ctx["experiment_types"],
+    }
 
     fig = None
     if plot_type == "pareto":
         fig = plot_gen.create_pareto_plot(
-            df,
-            x_metric,
-            y_metric,
-            label_by=actual_label_by,
-            group_by=actual_group_by,
-            title=title,
-            x_label=x_label,
-            y_label=y_label,
-            experiment_types=experiment_types,
+            df, ctx["x_metric"], ctx["y_metric"], **common
         )
     elif plot_type == "scatter_line":
         fig = plot_gen.create_scatter_line_plot(
-            df,
-            x_metric,
-            y_metric,
-            label_by=actual_label_by,
-            group_by=actual_group_by,
-            title=title,
-            x_label=x_label,
-            y_label=y_label,
-            experiment_types=experiment_types,
+            df, ctx["x_metric"], ctx["y_metric"], **common
         )
     elif plot_type == "scatter":
         fig = plot_gen.create_scatter_line_plot(
-            df,
-            x_metric,
-            y_metric,
-            label_by=actual_label_by,
-            group_by=actual_group_by,
-            title=title,
-            x_label=x_label,
-            y_label=y_label,
-            mode="markers",
-            experiment_types=experiment_types,
+            df, ctx["x_metric"], ctx["y_metric"], mode="markers", **common
         )
     elif plot_type == "bar":
         fig = plot_gen.create_multi_run_bar_chart(
             df=df,
-            x_metric=x_metric,
-            y_metric=y_metric,
-            group_by=actual_group_by,
-            title=title,
-            x_label=x_label,
-            y_label=y_label,
+            x_metric=ctx["x_metric"],
+            y_metric=ctx["y_metric"],
+            group_by=ctx["actual_group_by"],
+            title=ctx["title"],
+            x_label=ctx["x_label"],
+            y_label=ctx["y_label"],
         )
     elif plot_type == "latency_throughput_uncertainty":
-        import numpy as np
-        from scipy import stats as scipy_stats
-
-        from aiperf.plot.models.uncertainty import (
-            BenchmarkPoint,
-            LatencyThroughputUncertaintyData,
-        )
-
-        ci_level = plot_config_dict.get("ci_level", 0.95)
-        if ci_level not in {0.90, 0.95, 0.99}:
-            ci_level = 0.95
-
-        # Group by the operating-point key (e.g., concurrency) to aggregate repeated runs
-        group_col = actual_group_by or (
-            "concurrency" if "concurrency" in df.columns else None
-        )
-
-        if group_col and group_col in df.columns:
-            groups = sorted(df[group_col].unique())
-        else:
-            groups = [None]
-
-        points = []
-        for group in groups:
-            group_df = df[df[group_col] == group] if group is not None else df
-
-            x_vals = group_df[x_metric].values.astype(float)
-            y_vals = group_df[y_metric].values.astype(float)
-            n = len(x_vals)
-
-            x_mean = float(np.mean(x_vals))
-            y_mean = float(np.mean(y_vals))
-
-            if n >= 2:
-                t_crit = scipy_stats.t.ppf((1 + ci_level) / 2, df=n - 1)
-                x_se = float(np.std(x_vals, ddof=1) / np.sqrt(n))
-                y_se = float(np.std(y_vals, ddof=1) / np.sqrt(n))
-                x_ci_half = t_crit * x_se
-                y_ci_half = t_crit * y_se
-            else:
-                x_ci_half = 0.0
-                y_ci_half = 0.0
-
-            label_val = None
-            if actual_label_by and actual_label_by in group_df.columns:
-                label_val = str(group_df[actual_label_by].mode().iloc[0])
-
-            points.append(
-                BenchmarkPoint(
-                    x_mean=x_mean,
-                    y_mean=y_mean,
-                    x_ci_low=x_mean - x_ci_half,
-                    x_ci_high=x_mean + x_ci_half,
-                    y_ci_low=y_mean - y_ci_half,
-                    y_ci_high=y_mean + y_ci_half,
-                    label=label_val,
-                    n_runs=n,
-                )
-            )
-
-        uncertainty_data = LatencyThroughputUncertaintyData(
-            points=points,
-            confidence_level=ci_level,
-            title=title,
-            x_label=x_label,
-            y_label=y_label,
-        )
-        fig = plot_gen.create_uncertainty_plot(
-            uncertainty_data,
-            experiment_types=experiment_types,
+        fig = _build_uncertainty_figure(
+            df,
+            ctx["x_metric"],
+            ctx["y_metric"],
+            plot_gen,
+            actual_group_by=ctx["actual_group_by"],
+            actual_label_by=ctx["actual_label_by"],
+            plot_config_dict=plot_config_dict,
+            title=ctx["title"],
+            x_label=ctx["x_label"],
+            y_label=ctx["y_label"],
+            experiment_types=ctx["experiment_types"],
         )
     else:
         fig = plot_gen.create_scatter_line_plot(
-            df,
-            x_metric,
-            y_metric,
-            label_by=actual_label_by,
-            group_by=actual_group_by,
-            title=title,
-            x_label=x_label,
-            y_label=y_label,
-            experiment_types=experiment_types,
+            df, ctx["x_metric"], ctx["y_metric"], **common
         )
 
     if fig:
         fig = add_run_idx_to_figure(fig, df)
-
+        log_scale = plot_config_dict.get("log_scale", "none")
+        autoscale = plot_config_dict.get("autoscale", "none")
         if log_scale in ("x", "both"):
             fig.update_xaxes(type="log")
         if log_scale in ("y", "both"):
             fig.update_yaxes(type="log")
+        fig.update_xaxes(rangemode="normal" if autoscale in ("x", "both") else "tozero")
+        fig.update_yaxes(rangemode="normal" if autoscale in ("y", "both") else "tozero")
 
-        # Apply autoscale settings (default is "none" which starts both axes at 0)
-        x_rangemode = "normal" if autoscale in ("x", "both") else "tozero"
-        y_rangemode = "normal" if autoscale in ("y", "both") else "tozero"
-        fig.update_xaxes(rangemode=x_rangemode)
-        fig.update_yaxes(rangemode=y_rangemode)
-
-    return fig, plot_warnings
+    return fig, ctx["warnings"]
 
 
 def generate_plot_from_spec(
@@ -460,41 +430,20 @@ def generate_plot_from_spec(
             experiment_types=experiment_types,
         )
     elif spec.plot_type == PlotType.LATENCY_THROUGHPUT_UNCERTAINTY:
-        from aiperf.plot.models.uncertainty import (
-            BenchmarkPoint,
-            LatencyThroughputUncertaintyData,
-        )
-
-        points = []
-        for _, row in df.iterrows():
-            x_val = float(row[x_metric_spec.name])
-            y_val = float(row[y_metric_spec.name])
-            x_ci_half = abs(x_val) * 0.05 if x_val != 0 else 0.01
-            y_ci_half = abs(y_val) * 0.05 if y_val != 0 else 0.01
-            lbl = str(row[label_by]) if label_by and label_by in df.columns else None
-            points.append(
-                BenchmarkPoint(
-                    x_mean=x_val,
-                    y_mean=y_val,
-                    x_ci_low=x_val - x_ci_half,
-                    x_ci_high=x_val + x_ci_half,
-                    y_ci_low=y_val - y_ci_half,
-                    y_ci_high=y_val + y_ci_half,
-                    label=lbl,
-                )
-            )
         ci_level = getattr(spec, "ci_level", 0.95)
         if ci_level not in {0.90, 0.95, 0.99}:
             ci_level = 0.95
-        uncertainty_data = LatencyThroughputUncertaintyData(
-            points=points,
-            confidence_level=ci_level,
+        fig = _build_uncertainty_figure(
+            df,
+            x_metric_spec.name,
+            y_metric_spec.name,
+            plot_gen,
+            actual_group_by=group_by,
+            actual_label_by=label_by,
+            plot_config_dict={"ci_level": ci_level},
             title=title,
             x_label=x_label,
             y_label=y_label,
-        )
-        fig = plot_gen.create_uncertainty_plot(
-            uncertainty_data,
             experiment_types=experiment_types,
         )
     else:

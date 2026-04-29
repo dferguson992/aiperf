@@ -61,6 +61,121 @@ def _ellipse_params_axis_aligned(
     return 2.0 * x_half_width, 2.0 * y_half_width, 0.0
 
 
+def _apply_theme(
+    fig: matplotlib.figure.Figure,
+    ax: plt.Axes,
+    colors: dict[str, str],
+    *,
+    title: str,
+    x_label: str,
+    y_label: str,
+) -> None:
+    """Apply NVIDIA brand styling to figure and axes."""
+    fig.patch.set_facecolor(colors["background"])
+    ax.set_facecolor(colors["paper"])
+    ax.set_title(title, color=colors["text"], fontsize=14)
+    ax.set_xlabel(x_label, color=colors["text"])
+    ax.set_ylabel(y_label, color=colors["text"])
+    ax.tick_params(colors=colors["text"])
+    for spine in ax.spines.values():
+        spine.set_color(colors["border"])
+    ax.grid(True, color=colors["grid"], alpha=0.3)
+
+
+def _add_mean_line_and_errorbars(
+    ax: plt.Axes,
+    sorted_points: list,
+) -> None:
+    """Add mean-point line with markers and asymmetric crosshair error bars."""
+    x_vals = [p.x_mean for p in sorted_points]
+    y_vals = [p.y_mean for p in sorted_points]
+
+    linestyle = "-" if len(sorted_points) > 1 else "None"
+    ax.plot(
+        x_vals,
+        y_vals,
+        color=NVIDIA_GREEN,
+        marker="o",
+        markersize=6,
+        linestyle=linestyle,
+        linewidth=2,
+        label="Mean",
+        zorder=3,
+    )
+    ax.errorbar(
+        x_vals,
+        y_vals,
+        xerr=[
+            [p.x_mean - p.x_ci_low for p in sorted_points],
+            [p.x_ci_high - p.x_mean for p in sorted_points],
+        ],
+        yerr=[
+            [p.y_mean - p.y_ci_low for p in sorted_points],
+            [p.y_ci_high - p.y_mean for p in sorted_points],
+        ],
+        fmt="none",
+        ecolor=NVIDIA_GREEN,
+        elinewidth=1,
+        capsize=3,
+        alpha=0.7,
+        zorder=2,
+    )
+
+
+def _add_ellipses(
+    ax: plt.Axes,
+    sorted_points: list,
+    confidence_level: float,
+) -> None:
+    """Add confidence ellipse patches for each point."""
+    level_pct = int(confidence_level * 100)
+    ellipse_added = False
+    low_n_added = False
+
+    for point in sorted_points:
+        x_half = (point.x_ci_high - point.x_ci_low) / 2.0
+        y_half = (point.y_ci_high - point.y_ci_low) / 2.0
+
+        if point.cov_xy is not None and point.cov_xy != 0:
+            width, height, angle = _ellipse_params_from_covariance(
+                point_cov_xy=point.cov_xy,
+                x_half_width=x_half,
+                y_half_width=y_half,
+                confidence_level=confidence_level,
+            )
+        else:
+            width, height, angle = _ellipse_params_axis_aligned(
+                x_half_width=x_half,
+                y_half_width=y_half,
+            )
+
+        is_low_n = point.n_runs is not None and point.n_runs < 3
+        if is_low_n and not low_n_added:
+            label = "Low sample (n < 3)"
+            low_n_added = True
+        elif not is_low_n and not ellipse_added:
+            label = f"{level_pct}% Confidence Region"
+            ellipse_added = True
+        else:
+            label = None
+
+        ax.add_patch(
+            matplotlib.patches.Ellipse(
+                xy=(point.x_mean, point.y_mean),
+                width=width,
+                height=height,
+                angle=angle,
+                facecolor=NVIDIA_GREEN,
+                edgecolor=NVIDIA_GREEN,
+                alpha=0.08 if is_low_n else 0.15,
+                linewidth=1,
+                linestyle="--" if is_low_n else "-",
+                label=label,
+                zorder=1,
+            )
+        )
+
+
 def render_matplotlib_uncertainty(
     data: LatencyThroughputUncertaintyData,
     theme: PlotTheme = PlotTheme.LIGHT,
@@ -75,116 +190,20 @@ def render_matplotlib_uncertainty(
         Matplotlib Figure object.
     """
     colors = LIGHT_THEME_COLORS if theme == PlotTheme.LIGHT else DARK_THEME_COLORS
-
     fig, ax = plt.subplots(figsize=(10, 6))
-    fig.patch.set_facecolor(colors["background"])
-    ax.set_facecolor(colors["paper"])
 
     title = data.title or "Latency vs Throughput (Joint Uncertainty)"
     x_label = data.x_label or "Latency"
     y_label = data.y_label or "Throughput"
-
-    ax.set_title(title, color=colors["text"], fontsize=14)
-    ax.set_xlabel(x_label, color=colors["text"])
-    ax.set_ylabel(y_label, color=colors["text"])
-    ax.tick_params(colors=colors["text"])
-    for spine in ax.spines.values():
-        spine.set_color(colors["border"])
-    ax.grid(True, color=colors["grid"], alpha=0.3)
+    _apply_theme(fig, ax, colors, title=title, x_label=x_label, y_label=y_label)
 
     if not data.points:
         return fig
 
     sorted_points = sorted(data.points, key=lambda p: p.x_mean)
+    _add_mean_line_and_errorbars(ax, sorted_points)
+    _add_ellipses(ax, sorted_points, data.confidence_level)
 
-    x_vals = [p.x_mean for p in sorted_points]
-    y_vals = [p.y_mean for p in sorted_points]
-
-    # Mean-point line with markers (line only when >1 point)
-    linestyle = "-" if len(sorted_points) > 1 else "None"
-    ax.plot(
-        x_vals,
-        y_vals,
-        color=NVIDIA_GREEN,
-        marker="o",
-        markersize=6,
-        linestyle=linestyle,
-        linewidth=2,
-        label="Mean",
-        zorder=3,
-    )
-
-    # Asymmetric crosshair error bars
-    xerr_lower = [p.x_mean - p.x_ci_low for p in sorted_points]
-    xerr_upper = [p.x_ci_high - p.x_mean for p in sorted_points]
-    yerr_lower = [p.y_mean - p.y_ci_low for p in sorted_points]
-    yerr_upper = [p.y_ci_high - p.y_mean for p in sorted_points]
-
-    ax.errorbar(
-        x_vals,
-        y_vals,
-        xerr=[xerr_lower, xerr_upper],
-        yerr=[yerr_lower, yerr_upper],
-        fmt="none",
-        ecolor=NVIDIA_GREEN,
-        elinewidth=1,
-        capsize=3,
-        alpha=0.7,
-        zorder=2,
-    )
-
-    # Confidence ellipses
-    level_pct = int(data.confidence_level * 100)
-    ellipse_added = False
-    low_n_added = False
-
-    for point in sorted_points:
-        x_half = (point.x_ci_high - point.x_ci_low) / 2.0
-        y_half = (point.y_ci_high - point.y_ci_low) / 2.0
-
-        if point.cov_xy is not None and point.cov_xy != 0:
-            width, height, angle = _ellipse_params_from_covariance(
-                point_cov_xy=point.cov_xy,
-                x_half_width=x_half,
-                y_half_width=y_half,
-                confidence_level=data.confidence_level,
-            )
-        else:
-            width, height, angle = _ellipse_params_axis_aligned(
-                x_half_width=x_half,
-                y_half_width=y_half,
-            )
-
-        # Low-n points get dashed border and reduced opacity
-        is_low_n = point.n_runs is not None and point.n_runs < 3
-        linestyle = "--" if is_low_n else "-"
-        alpha = 0.08 if is_low_n else 0.15
-
-        if is_low_n and not low_n_added:
-            ellipse_label = "Low sample (n < 3)"
-            low_n_added = True
-        elif not is_low_n and not ellipse_added:
-            ellipse_label = f"{level_pct}% Confidence Region"
-            ellipse_added = True
-        else:
-            ellipse_label = None
-
-        ellipse = matplotlib.patches.Ellipse(
-            xy=(point.x_mean, point.y_mean),
-            width=width,
-            height=height,
-            angle=angle,
-            facecolor=NVIDIA_GREEN,
-            edgecolor=NVIDIA_GREEN,
-            alpha=alpha,
-            linewidth=1,
-            linestyle=linestyle,
-            label=ellipse_label,
-            zorder=1,
-        )
-        ax.add_patch(ellipse)
-
-    # Text annotations for labeled points
     for point in sorted_points:
         if point.label is not None:
             ax.annotate(
@@ -200,6 +219,5 @@ def render_matplotlib_uncertainty(
     ax.legend(
         facecolor=colors["paper"], edgecolor=colors["border"], labelcolor=colors["text"]
     )
-
     fig.tight_layout()
     return fig

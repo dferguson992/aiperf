@@ -7,6 +7,7 @@ Feature: latency-throughput-uncertainty-plot
 """
 
 import math
+from pathlib import Path
 
 import matplotlib.patches
 import matplotlib.pyplot as plt
@@ -19,10 +20,17 @@ from hypothesis import strategies as st
 from pydantic import ValidationError
 from scipy.stats import chi2
 
+from aiperf.plot.config import PlotConfig
+from aiperf.plot.constants import PlotTheme
 from aiperf.plot.core.plot_generator import PlotGenerator
+from aiperf.plot.dashboard.builder import _build_multi_run_plot_types
+from aiperf.plot.exporters import export_uncertainty_matplotlib
 from aiperf.plot.geometry import (
     compute_axis_aligned_ellipse_vertices,
     compute_ellipse_vertices,
+)
+from aiperf.plot.handlers.multi_run_handlers import (
+    LatencyThroughputUncertaintyHandler,
 )
 from aiperf.plot.models.uncertainty import (
     BenchmarkPoint,
@@ -42,6 +50,18 @@ positive_floats = st.floats(
 )
 valid_confidence_levels = st.sampled_from([0.90, 0.95, 0.99])
 vertex_counts = st.integers(min_value=8, max_value=256)
+
+
+def _find_plotly_mean_trace(fig: go.Figure) -> go.Scatter | None:
+    """Find the mean-point trace (has error_x and error_y set)."""
+    for trace in fig.data:
+        if (
+            hasattr(trace, "error_x")
+            and trace.error_x is not None
+            and trace.error_x.array is not None
+        ):
+            return trace
+    return None
 
 
 @st.composite
@@ -666,11 +686,14 @@ class TestDataContractModels:
         data = LatencyThroughputUncertaintyData(points=[])
         assert data.confidence_level == 0.95
 
-    def test_uncertainty_data_valid_confidence_levels(self) -> None:
-        """All three valid confidence levels are accepted."""
-        for level in [0.90, 0.95, 0.99]:
-            data = LatencyThroughputUncertaintyData(points=[], confidence_level=level)
-            assert data.confidence_level == level
+    @pytest.mark.parametrize(
+        "level",
+        [0.90, 0.95, 0.99],
+    )  # fmt: skip
+    def test_uncertainty_data_valid_confidence_levels(self, level: float) -> None:
+        """Valid confidence level is accepted."""
+        data = LatencyThroughputUncertaintyData(points=[], confidence_level=level)
+        assert data.confidence_level == level
 
     def test_uncertainty_data_invalid_confidence_level_raises(self) -> None:
         """Invalid confidence_level raises ValidationError."""
@@ -781,7 +804,7 @@ class TestPlotlyRendererSortedMeanTraceWithErrorBars:
         pg = PlotGenerator()
         fig = pg.create_uncertainty_plot(data)
 
-        mean_trace = self._find_mean_trace(fig)
+        mean_trace = _find_plotly_mean_trace(fig)
         assert mean_trace is not None, "No mean trace with error_x found"
 
         x_vals = list(mean_trace.x)
@@ -797,7 +820,7 @@ class TestPlotlyRendererSortedMeanTraceWithErrorBars:
         pg = PlotGenerator()
         fig = pg.create_uncertainty_plot(data)
 
-        mean_trace = self._find_mean_trace(fig)
+        mean_trace = _find_plotly_mean_trace(fig)
         assert mean_trace is not None, "No mean trace with error_x found"
 
         sorted_points = sorted(data.points, key=lambda p: p.x_mean)
@@ -825,18 +848,6 @@ class TestPlotlyRendererSortedMeanTraceWithErrorBars:
             assert abs(actual_ey_minus[i] - expected_ey_minus[i]) < 1e-10, (
                 f"error_y minus mismatch at {i}: {actual_ey_minus[i]} vs {expected_ey_minus[i]}"
             )
-
-    @staticmethod
-    def _find_mean_trace(fig: go.Figure) -> go.Scatter | None:
-        """Find the mean-point trace (has error_x and error_y set)."""
-        for trace in fig.data:
-            if (
-                hasattr(trace, "error_x")
-                and trace.error_x is not None
-                and trace.error_x.array is not None
-            ):
-                return trace
-        return None
 
 
 # --- Property 7: Plotly renderer produces one ellipse trace per point ---
@@ -966,7 +977,7 @@ class TestPlotlyRendererTextAnnotationsForLabeledPoints:
         pg = PlotGenerator()
         fig = pg.create_uncertainty_plot(data)
 
-        mean_trace = self._find_mean_trace(fig)
+        mean_trace = _find_plotly_mean_trace(fig)
         assert mean_trace is not None, "No mean trace with error_x found"
 
         expected_labeled_count = sum(1 for p in data.points if p.label is not None)
@@ -981,18 +992,6 @@ class TestPlotlyRendererTextAnnotationsForLabeledPoints:
             f"Expected {expected_labeled_count} non-empty text annotations, got {actual_non_empty}"
         )
 
-    @staticmethod
-    def _find_mean_trace(fig: go.Figure) -> go.Scatter | None:
-        """Find the mean-point trace (has error_x and error_y set)."""
-        for trace in fig.data:
-            if (
-                hasattr(trace, "error_x")
-                and trace.error_x is not None
-                and trace.error_x.array is not None
-            ):
-                return trace
-        return None
-
 
 # --- Integration test: Kaleido PNG export produces valid PNG (Task 7.1) ---
 
@@ -1003,7 +1002,7 @@ class TestKaleidoPNGExport:
     Validates: Requirements 3.8, 8.4
     """
 
-    def test_kaleido_export_produces_valid_png(self, tmp_path) -> None:
+    def test_kaleido_export_produces_valid_png(self, tmp_path: Path) -> None:
         """Exporting uncertainty plot via Kaleido produces valid PNG file."""
         points = [
             BenchmarkPoint(
@@ -1282,7 +1281,7 @@ class TestCrossBackendElementCountConsistency:
         mpl_fig = render_matplotlib_uncertainty(data)
 
         # Plotly: mean trace x-values count
-        plotly_mean_trace = self._find_plotly_mean_trace(plotly_fig)
+        plotly_mean_trace = _find_plotly_mean_trace(plotly_fig)
         assert plotly_mean_trace is not None
         plotly_n = len(plotly_mean_trace.x)
 
@@ -1335,7 +1334,7 @@ class TestCrossBackendElementCountConsistency:
         mpl_fig = render_matplotlib_uncertainty(data)
 
         # Plotly: error bar count from mean trace
-        plotly_mean_trace = self._find_plotly_mean_trace(plotly_fig)
+        plotly_mean_trace = _find_plotly_mean_trace(plotly_fig)
         assert plotly_mean_trace is not None
         plotly_err_count = len(plotly_mean_trace.error_x.array)
 
@@ -1375,18 +1374,6 @@ class TestCrossBackendElementCountConsistency:
 
         plt.close(mpl_fig)
 
-    @staticmethod
-    def _find_plotly_mean_trace(fig: go.Figure) -> go.Scatter | None:
-        """Find the mean-point trace (has error_x and error_y set)."""
-        for trace in fig.data:
-            if (
-                hasattr(trace, "error_x")
-                and trace.error_x is not None
-                and trace.error_x.array is not None
-            ):
-                return trace
-        return None
-
 
 # --- Unit tests for plugin registration and config parsing (Task 10.5) ---
 
@@ -1399,10 +1386,6 @@ class TestPluginRegistrationAndConfigParsing:
 
     def test_plugin_registration_returns_handler_class(self) -> None:
         """plugins.get_class returns LatencyThroughputUncertaintyHandler."""
-        from aiperf.plot.handlers.multi_run_handlers import (
-            LatencyThroughputUncertaintyHandler,
-        )
-
         cls = plugins.get_class(
             PluginType.PLOT, PlotType.LATENCY_THROUGHPUT_UNCERTAINTY
         )
@@ -1426,10 +1409,8 @@ class TestPluginRegistrationAndConfigParsing:
             or "ellipse" in entry.description.lower()
         )
 
-    def test_yaml_preset_parsing_with_ci_level(self, tmp_path) -> None:
+    def test_yaml_preset_parsing_with_ci_level(self, tmp_path: Path) -> None:
         """YAML preset with ci_level produces valid PlotSpec."""
-        from aiperf.plot.config import PlotConfig
-
         config_content = """\
 visualization:
   multi_run_defaults:
@@ -1463,10 +1444,8 @@ visualization:
         # ci_level passed through via extra="allow" on AIPerfBaseModel
         assert getattr(spec, "ci_level", None) == 0.95
 
-    def test_yaml_preset_parsing_without_ci_level(self, tmp_path) -> None:
+    def test_yaml_preset_parsing_without_ci_level(self, tmp_path: Path) -> None:
         """YAML preset without ci_level still produces valid PlotSpec."""
-        from aiperf.plot.config import PlotConfig
-
         config_content = """\
 visualization:
   multi_run_defaults:
@@ -1509,16 +1488,12 @@ class TestDashboardDropdownInclusion:
 
     def test_build_multi_run_plot_types_includes_uncertainty(self) -> None:
         """_build_multi_run_plot_types returns entry with LATENCY_THROUGHPUT_UNCERTAINTY."""
-        from aiperf.plot.dashboard.builder import _build_multi_run_plot_types
-
         plot_types = _build_multi_run_plot_types()
         values = [entry["value"] for entry in plot_types]
         assert PlotType.LATENCY_THROUGHPUT_UNCERTAINTY in values
 
     def test_build_multi_run_plot_types_uncertainty_label(self) -> None:
         """Uncertainty entry has correct label from plugin metadata."""
-        from aiperf.plot.dashboard.builder import _build_multi_run_plot_types
-
         plot_types = _build_multi_run_plot_types()
         uncertainty_entry = next(
             e
@@ -1537,10 +1512,8 @@ class TestExportUncertaintyMatplotlib:
     **Validates: Requirements 4.7, 7.1**
     """
 
-    def test_export_produces_valid_png(self, tmp_path) -> None:
+    def test_export_produces_valid_png(self, tmp_path: Path) -> None:
         """export_uncertainty_matplotlib writes a valid PNG file."""
-        from aiperf.plot.exporters import export_uncertainty_matplotlib
-
         data = LatencyThroughputUncertaintyData(
             points=[
                 BenchmarkPoint(
@@ -1574,10 +1547,8 @@ class TestExportUncertaintyMatplotlib:
         magic = out.read_bytes()[:4]
         assert magic == b"\x89PNG"
 
-    def test_export_creates_parent_directories(self, tmp_path) -> None:
+    def test_export_creates_parent_directories(self, tmp_path: Path) -> None:
         """export_uncertainty_matplotlib creates missing parent dirs."""
-        from aiperf.plot.exporters import export_uncertainty_matplotlib
-
         data = LatencyThroughputUncertaintyData(
             points=[
                 BenchmarkPoint(
@@ -1598,10 +1569,8 @@ class TestExportUncertaintyMatplotlib:
         assert result == nested
         assert nested.exists()
 
-    def test_export_empty_data_produces_valid_png(self, tmp_path) -> None:
+    def test_export_empty_data_produces_valid_png(self, tmp_path: Path) -> None:
         """Empty points list still produces a valid PNG."""
-        from aiperf.plot.exporters import export_uncertainty_matplotlib
-
         data = LatencyThroughputUncertaintyData(
             points=[],
             confidence_level=0.95,
@@ -1616,11 +1585,12 @@ class TestExportUncertaintyMatplotlib:
         magic = out.read_bytes()[:4]
         assert magic == b"\x89PNG"
 
-    def test_export_respects_theme(self, tmp_path) -> None:
+    @pytest.mark.parametrize(
+        "theme",
+        [PlotTheme.LIGHT, PlotTheme.DARK],
+    )  # fmt: skip
+    def test_export_respects_theme(self, tmp_path: Path, theme: PlotTheme) -> None:
         """Both light and dark themes produce valid PNGs."""
-        from aiperf.plot.constants import PlotTheme
-        from aiperf.plot.exporters import export_uncertainty_matplotlib
-
         data = LatencyThroughputUncertaintyData(
             points=[
                 BenchmarkPoint(
@@ -1635,8 +1605,7 @@ class TestExportUncertaintyMatplotlib:
             confidence_level=0.95,
         )
 
-        for theme in (PlotTheme.LIGHT, PlotTheme.DARK):
-            out = tmp_path / f"{theme.value}.png"
-            export_uncertainty_matplotlib(data, out, theme=theme)
-            assert out.exists()
-            assert out.read_bytes()[:4] == b"\x89PNG"
+        out = tmp_path / f"{theme.value}.png"
+        export_uncertainty_matplotlib(data, out, theme=theme)
+        assert out.exists()
+        assert out.read_bytes()[:4] == b"\x89PNG"
