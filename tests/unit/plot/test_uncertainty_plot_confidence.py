@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Property-based tests for ellipse geometry utility.
@@ -1241,8 +1242,7 @@ class TestMatplotlibRendererOneEllipsePatchPerPoint:
         for i, (patch, point) in enumerate(
             zip(ellipse_patches, sorted_points, strict=True)
         ):
-            if point.cov_xy is None or abs(point.cov_xy) <= 1e-6:
-                # Axis-aligned: angle must be zero
+            if point.cov_xy is None or point.cov_xy == 0:
                 assert math.isclose(patch.angle, 0.0, abs_tol=1e-6), (
                     f"Ellipse {i} has angle={patch.angle} but cov_xy is None/zero"
                 )
