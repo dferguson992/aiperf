@@ -15,6 +15,7 @@ import matplotlib.colors as mcolors
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from scipy.stats import chi2
 import seaborn as sns
 
 from aiperf.common.enums import MetricFlags, PlotMetricDirection
@@ -2173,7 +2174,10 @@ class PlotGenerator:
         return go.Scatter(**kwargs)
 
     def _build_ellipse_trace(self, point: BenchmarkPoint, color: str) -> go.Scatter:
-        """Build a single ellipse polygon trace for one benchmark point."""
+        """Build a single ellipse polygon trace for one benchmark point.
+
+        Note: Assumes CI bounds are pre-scaled for the desired confidence level.
+        """
         center = (point.x_mean, point.y_mean)
         x_radius = (point.x_ci_high - point.x_ci_low) / 2
         y_radius = (point.y_ci_high - point.y_ci_low) / 2
@@ -2214,15 +2218,11 @@ class PlotGenerator:
     def create_uncertainty_plot(
         self,
         data: LatencyThroughputUncertaintyData,
-        experiment_types: dict[str, str] | None = None,
-        group_display_names: dict[str, str] | None = None,
     ) -> go.Figure:
         """Create latency-throughput uncertainty plot with error bars and confidence ellipses.
 
         Args:
             data: Shared data contract with benchmark points and metadata.
-            experiment_types: Optional mapping of experiment type IDs to display names.
-            group_display_names: Optional mapping of group IDs to display names.
 
         Returns:
             Plotly Figure with mean-point trace, error bars, and ellipse polygons.

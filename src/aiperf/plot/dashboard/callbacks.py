@@ -146,7 +146,6 @@ def _build_uncertainty_figure(
     title: str,
     x_label: str,
     y_label: str,
-    experiment_types: dict[str, str] | None,
 ) -> go.Figure:
     """Build an uncertainty figure from grouped DataFrame with t-based CIs."""
     from aiperf.plot.handlers.multi_run_handlers import _build_uncertainty_points
@@ -174,10 +173,7 @@ def _build_uncertainty_figure(
         x_label=x_label,
         y_label=y_label,
     )
-    return plot_gen.create_uncertainty_plot(
-        uncertainty_data,
-        experiment_types=experiment_types,
-    )
+    return plot_gen.create_uncertainty_plot(uncertainty_data)
 
 
 def _prepare_multirun_context(
@@ -305,7 +301,6 @@ def _generate_multirun_figure(
             title=ctx["title"],
             x_label=ctx["x_label"],
             y_label=ctx["y_label"],
-            experiment_types=ctx["experiment_types"],
         )
     else:
         fig = plot_gen.create_scatter_line_plot(
@@ -444,7 +439,6 @@ def generate_plot_from_spec(
             title=title,
             x_label=x_label,
             y_label=y_label,
-            experiment_types=experiment_types,
         )
     else:
         return None
@@ -1683,7 +1677,6 @@ def register_export_png_callback(
                             )
                             fig = plot_gen.create_uncertainty_plot(
                                 uncertainty_data,
-                                experiment_types=experiment_types,
                             )
                         else:
                             # Skip unsupported plot types

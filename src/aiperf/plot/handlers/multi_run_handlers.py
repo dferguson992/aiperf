@@ -219,7 +219,7 @@ def _build_uncertainty_points(
     x_col: str,
     y_col: str,
     *,
-    group_col: str | None,
+    group_col: str | list[str] | None,
     label_col: str | None,
     ci_level: float,
 ) -> list:
@@ -229,6 +229,10 @@ def _build_uncertainty_points(
 
     from aiperf.plot.models.uncertainty import BenchmarkPoint
 
+    # Normalize list-valued group_col to a single column name
+    if isinstance(group_col, list):
+        group_col = next((col for col in group_col if col in data.columns), None)
+
     if group_col and group_col in data.columns:
         groups: list = sorted(data[group_col].dropna().unique())
     else:
@@ -236,7 +240,9 @@ def _build_uncertainty_points(
 
     points: list[BenchmarkPoint] = []
     for group in groups:
-        group_df = data[data[group_col] == group] if group is not None else data
+        group_df = (
+            data[data[group_col] == group] if group is not None and group_col else data
+        )
         if group_df.empty:
             continue
 
@@ -314,7 +320,7 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
             confidence_level=ci_level,
             title=spec.title,
             x_label=self._get_metric_label(
-                x_metric.name, x_metric.stat or "avg", available_metrics
+                x_metric.name, x_metric.stat or DEFAULT_PERCENTILE, available_metrics
             ),
             y_label=self._get_metric_label(
                 y_metric.name, y_metric.stat or "avg", available_metrics
@@ -322,8 +328,4 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
             group_by=group_by,
         )
 
-        return self.plot_generator.create_uncertainty_plot(
-            uncertainty_data,
-            experiment_types=self._extract_experiment_types(data, spec.group_by),
-            group_display_names=self._extract_group_display_names(data, spec.group_by),
-        )
+        return self.plot_generator.create_uncertainty_plot(uncertainty_data)

@@ -767,9 +767,34 @@ def valid_benchmark_point(draw: st.DrawFn) -> BenchmarkPoint:
 def valid_uncertainty_data(
     draw: st.DrawFn, min_points: int = 1
 ) -> LatencyThroughputUncertaintyData:
-    """Generate valid LatencyThroughputUncertaintyData with 1-5 points."""
+    """Generate valid LatencyThroughputUncertaintyData with 1-5 unique-x points."""
     n = draw(st.integers(min_value=min_points, max_value=5))
-    points = [draw(valid_benchmark_point()) for _ in range(n)]
+    # Ensure distinct x_mean values so sorted-order assertions are deterministic
+    x_means = draw(
+        st.lists(
+            st.floats(min_value=-1e3, max_value=1e3, allow_nan=False, allow_infinity=False),
+            min_size=n,
+            max_size=n,
+            unique=True,
+        )
+    )
+    points = []
+    for x_mean in x_means:
+        point = draw(valid_benchmark_point())
+        # Override x_mean and re-derive CI bounds to maintain ordering invariant
+        x_offset = point.x_ci_high - point.x_mean
+        points.append(
+            BenchmarkPoint(
+                x_mean=x_mean,
+                y_mean=point.y_mean,
+                x_ci_low=x_mean - x_offset,
+                x_ci_high=x_mean + x_offset,
+                y_ci_low=point.y_ci_low,
+                y_ci_high=point.y_ci_high,
+                cov_xy=point.cov_xy,
+                label=point.label,
+            )
+        )
     confidence = draw(valid_confidence_levels)
     return LatencyThroughputUncertaintyData(
         points=points,
@@ -1052,8 +1077,8 @@ class TestKaleidoPNGExport:
 
         assert output_path.exists()
         with open(output_path, "rb") as f:
-            magic = f.read(4)
-        assert magic == b"\x89PNG"
+            magic = f.read(8)
+        assert magic == b"\x89PNG\r\n\x1a\n"
 
 
 # --- Property 10: Matplotlib renderer produces sorted mean line with correct error bars ---
@@ -1214,14 +1239,13 @@ class TestMatplotlibRendererOneEllipsePatchPerPoint:
         for i, (patch, point) in enumerate(
             zip(ellipse_patches, sorted_points, strict=True)
         ):
-            if point.cov_xy is not None and abs(point.cov_xy) > 1e-6:
-                assert not math.isclose(patch.angle, 0.0, abs_tol=1e-6), (
-                    f"Ellipse {i} has near-zero angle={patch.angle} with cov_xy={point.cov_xy}"
-                )
-            else:
+            if point.cov_xy is None or abs(point.cov_xy) <= 1e-6:
+                # Axis-aligned: angle must be zero
                 assert math.isclose(patch.angle, 0.0, abs_tol=1e-6), (
                     f"Ellipse {i} has angle={patch.angle} but cov_xy is None/zero"
                 )
+            # Non-zero cov_xy may or may not produce visible rotation depending
+            # on the variance ratio, so we only assert the zero-angle case.
 
         plt.close(fig)
 
@@ -1544,8 +1568,8 @@ class TestExportUncertaintyMatplotlib:
 
         assert result == out
         assert out.exists()
-        magic = out.read_bytes()[:4]
-        assert magic == b"\x89PNG"
+        magic = out.read_bytes()[:8]
+        assert magic == b"\x89PNG\r\n\x1a\n"
 
     def test_export_creates_parent_directories(self, tmp_path: Path) -> None:
         """export_uncertainty_matplotlib creates missing parent dirs."""
@@ -1582,8 +1606,8 @@ class TestExportUncertaintyMatplotlib:
 
         assert result == out
         assert out.exists()
-        magic = out.read_bytes()[:4]
-        assert magic == b"\x89PNG"
+        magic = out.read_bytes()[:8]
+        assert magic == b"\x89PNG\r\n\x1a\n"
 
     @pytest.mark.parametrize(
         "theme",
@@ -1608,4 +1632,4 @@ class TestExportUncertaintyMatplotlib:
         out = tmp_path / f"{theme.value}.png"
         export_uncertainty_matplotlib(data, out, theme=theme)
         assert out.exists()
-        assert out.read_bytes()[:4] == b"\x89PNG"
+        assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

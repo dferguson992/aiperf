@@ -55,6 +55,12 @@ def _ellipse_params_axis_aligned(
 ) -> tuple[float, float, float]:
     """Compute Ellipse width, height for axis-aligned case.
 
+    No chi-square scaling is applied here because the input half-widths are
+    already confidence-scaled (t_crit * SE) by the handler. Applying chi2.ppf
+    would double-scale the ellipse. The covariance path in
+    _ellipse_params_from_covariance uses chi-square scaling because it
+    re-derives semi-axes from eigendecomposition of a covariance matrix.
+
     Returns:
         (width, height, 0.0) — full diameters, zero rotation.
     """
