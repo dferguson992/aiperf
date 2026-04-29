@@ -155,9 +155,7 @@ def _build_uncertainty_figure(
     if ci_level not in {0.90, 0.95, 0.99}:
         ci_level = 0.95
 
-    group_col = actual_group_by or (
-        "concurrency" if "concurrency" in df.columns else None
-    )
+    group_col = "concurrency" if "concurrency" in df.columns else actual_group_by
     points = _build_uncertainty_points(
         df,
         x_metric,
@@ -197,6 +195,11 @@ def _prepare_multirun_context(
 
     label_by = plot_config_dict.get("label_by", "concurrency")
     group_by = plot_config_dict.get("group_by", "model")
+    # Normalize list-valued specs to single column name
+    if isinstance(label_by, list):
+        label_by = label_by[0] if label_by else None
+    if isinstance(group_by, list):
+        group_by = group_by[0] if group_by else None
     actual_label_by = None if label_by == "none" else label_by
     actual_group_by = None if group_by == "none" else group_by
 
