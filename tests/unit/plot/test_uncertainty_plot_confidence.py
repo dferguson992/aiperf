@@ -1,5 +1,4 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Property-based tests for ellipse geometry utility.
@@ -14,6 +13,7 @@ import matplotlib.patches
 import matplotlib.pyplot as plt
 import numpy as np
 import orjson
+import pandas as pd
 import plotly.graph_objects as go
 import pytest
 from hypothesis import given, settings
@@ -23,8 +23,14 @@ from scipy.stats import chi2
 
 from aiperf.plot.config import PlotConfig
 from aiperf.plot.constants import PlotTheme
+from aiperf.plot.core.aggregate_data_loader import (
+    AggregateConfidenceData,
+    AggregateDataLoader,
+    ConfidenceMetricData,
+)
 from aiperf.plot.core.plot_generator import PlotGenerator
 from aiperf.plot.dashboard.builder import _build_multi_run_plot_types
+from aiperf.plot.dashboard.callbacks import _build_uncertainty_figure
 from aiperf.plot.exporters import export_uncertainty_matplotlib
 from aiperf.plot.geometry import (
     compute_axis_aligned_ellipse_vertices,
@@ -32,6 +38,7 @@ from aiperf.plot.geometry import (
 )
 from aiperf.plot.handlers.multi_run_handlers import (
     LatencyThroughputUncertaintyHandler,
+    _build_uncertainty_points,
 )
 from aiperf.plot.models.uncertainty import (
     BenchmarkPoint,
@@ -1635,3 +1642,431 @@ class TestExportUncertaintyMatplotlib:
         export_uncertainty_matplotlib(data, out, theme=theme)
         assert out.exists()
         assert out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+# ---------------------------------------------------------------------------
+# Additional unit tests for patch coverage
+# ---------------------------------------------------------------------------
+
+# --- Tests for _build_uncertainty_points (multi_run_handlers.py) ---
+
+
+class TestBuildUncertaintyPoints:
+    """Unit tests for _build_uncertainty_points covering grouped DataFrames."""
+
+    def test_multiple_groups_multiple_rows(self) -> None:
+        """Multiple concurrency groups with multiple rows each produce correct points."""
+        df = pd.DataFrame(
+            {
+                "x": [1.0, 2.0, 3.0, 10.0, 20.0, 30.0],
+                "y": [10.0, 20.0, 30.0, 100.0, 200.0, 300.0],
+                "concurrency": [1, 1, 1, 4, 4, 4],
+            }
+        )
+        points = _build_uncertainty_points(
+            df, "x", "y", group_col="concurrency", label_col=None, ci_level=0.95
+        )
+        assert len(points) == 2
+        assert points[0].n_runs == 3
+        assert points[1].n_runs == 3
+        assert points[0].x_mean == pytest.approx(2.0)
+        assert points[1].x_mean == pytest.approx(20.0)
+        assert points[0].x_ci_low < points[0].x_mean
+        assert points[0].x_ci_high > points[0].x_mean
+
+    def test_single_row_group_ci_is_zero(self) -> None:
+        """A group with n=1 produces zero-width CI (ci_half = 0)."""
+        df = pd.DataFrame({"x": [5.0], "y": [50.0], "concurrency": [1]})
+        points = _build_uncertainty_points(
+            df, "x", "y", group_col="concurrency", label_col=None, ci_level=0.95
+        )
+        assert len(points) == 1
+        p = points[0]
+        assert p.n_runs == 1
+        assert p.x_ci_low == p.x_mean
+        assert p.x_ci_high == p.x_mean
+        assert p.y_ci_low == p.y_mean
+        assert p.y_ci_high == p.y_mean
+
+    def test_list_valued_group_col_normalizes(self) -> None:
+        """A list-valued group_col picks the first matching column."""
+        df = pd.DataFrame(
+            {
+                "x": [1.0, 2.0],
+                "y": [10.0, 20.0],
+                "concurrency": [1, 2],
+            }
+        )
+        points = _build_uncertainty_points(
+            df,
+            "x",
+            "y",
+            group_col=["missing_col", "concurrency"],
+            label_col=None,
+            ci_level=0.95,
+        )
+        assert len(points) == 2
+
+    def test_nan_values_in_group_col_dropped(self) -> None:
+        """NaN values in the group column are dropped from grouping."""
+        df = pd.DataFrame(
+            {
+                "x": [1.0, 2.0, 3.0],
+                "y": [10.0, 20.0, 30.0],
+                "concurrency": [1.0, float("nan"), 2.0],
+            }
+        )
+        points = _build_uncertainty_points(
+            df, "x", "y", group_col="concurrency", label_col=None, ci_level=0.95
+        )
+        assert len(points) == 2
+        assert all(p.n_runs == 1 for p in points)
+
+    def test_label_col_all_nan_gives_none(self) -> None:
+        """When label_col values are all NaN, label_val is None."""
+        df = pd.DataFrame(
+            {
+                "x": [1.0, 2.0],
+                "y": [10.0, 20.0],
+                "concurrency": [1, 1],
+                "label": [float("nan"), float("nan")],
+            }
+        )
+        points = _build_uncertainty_points(
+            df, "x", "y", group_col="concurrency", label_col="label", ci_level=0.95
+        )
+        assert len(points) == 1
+        assert points[0].label is None
+
+
+# --- Tests for AggregateDataLoader (aggregate_data_loader.py) ---
+
+
+class TestAggregateDataLoader:
+    """Unit tests for AggregateDataLoader covering try_load and _parse_aggregate."""
+
+    def _make_valid_aggregate(self) -> dict:
+        """Build a minimal valid aggregate JSON structure."""
+        return {
+            "metadata": {
+                "confidence_level": 0.95,
+                "num_successful_runs": 3,
+                "run_labels": ["run1", "run2", "run3"],
+            },
+            "metrics": {
+                "request_latency_avg": {
+                    "mean": 10.0,
+                    "std": 1.0,
+                    "min": 8.0,
+                    "max": 12.0,
+                    "se": 0.58,
+                    "ci_low": 8.5,
+                    "ci_high": 11.5,
+                    "t_critical": 4.303,
+                    "unit": "ms",
+                },
+            },
+        }
+
+    def test_try_load_valid_file(self, tmp_path: Path) -> None:
+        """try_load with a valid aggregate JSON returns AggregateConfidenceData."""
+        agg_dir = tmp_path / "aggregate"
+        agg_dir.mkdir()
+        payload = self._make_valid_aggregate()
+        (agg_dir / "profile_export_aiperf_aggregate.json").write_bytes(
+            orjson.dumps(payload)
+        )
+        loader = AggregateDataLoader()
+        result = loader.try_load(tmp_path)
+        assert result is not None
+        assert isinstance(result, AggregateConfidenceData)
+        assert result.num_runs == 3
+        assert "request_latency_avg" in result.metrics
+
+    def test_try_load_missing_file(self, tmp_path: Path) -> None:
+        """try_load with missing file returns None."""
+        loader = AggregateDataLoader()
+        result = loader.try_load(tmp_path)
+        assert result is None
+
+    def test_try_load_malformed_json(self, tmp_path: Path) -> None:
+        """try_load with malformed JSON returns None."""
+        agg_dir = tmp_path / "aggregate"
+        agg_dir.mkdir()
+        (agg_dir / "profile_export_aiperf_aggregate.json").write_bytes(b"not json{{{")
+        loader = AggregateDataLoader()
+        result = loader.try_load(tmp_path)
+        assert result is None
+
+    def test_parse_aggregate_non_dict(self) -> None:
+        """_parse_aggregate with non-dict input returns None."""
+        loader = AggregateDataLoader()
+        assert loader._parse_aggregate("not a dict") is None
+        assert loader._parse_aggregate([1, 2, 3]) is None
+
+    def test_parse_aggregate_missing_metadata(self) -> None:
+        """_parse_aggregate with missing metadata key returns None."""
+        loader = AggregateDataLoader()
+        assert loader._parse_aggregate({"metrics": {}}) is None
+
+    def test_parse_aggregate_malformed_metric_entries(self) -> None:
+        """_parse_aggregate skips non-dict metric entries."""
+        loader = AggregateDataLoader()
+        raw = {
+            "metadata": {
+                "confidence_level": 0.95,
+                "num_successful_runs": 1,
+                "run_labels": ["r1"],
+            },
+            "metrics": {
+                "good_metric": {
+                    "mean": 1.0,
+                    "std": 0.1,
+                    "min": 0.9,
+                    "max": 1.1,
+                    "se": 0.05,
+                    "ci_low": 0.9,
+                    "ci_high": 1.1,
+                    "t_critical": 12.7,
+                    "unit": "ms",
+                },
+                "bad_metric": "not a dict",
+            },
+        }
+        result = loader._parse_aggregate(raw)
+        assert result is not None
+        assert "good_metric" in result.metrics
+        assert "bad_metric" not in result.metrics
+
+    def test_parse_aggregate_validation_error_skips_metric(self) -> None:
+        """_parse_aggregate skips metrics that fail ConfidenceMetricData validation."""
+        loader = AggregateDataLoader()
+        raw = {
+            "metadata": {
+                "confidence_level": 0.95,
+                "num_successful_runs": 1,
+                "run_labels": ["r1"],
+            },
+            "metrics": {
+                "incomplete_metric": {
+                    "mean": 1.0,
+                    # missing required fields like std, min, max, se, ci_low, ci_high, t_critical, unit
+                },
+            },
+        }
+        result = loader._parse_aggregate(raw)
+        assert result is not None
+        assert "incomplete_metric" not in result.metrics
+
+    def test_get_metric_existing(self) -> None:
+        """get_metric returns ConfidenceMetricData for an existing metric."""
+        loader = AggregateDataLoader()
+        metric = ConfidenceMetricData(
+            mean=10.0,
+            std=1.0,
+            min=8.0,
+            max=12.0,
+            se=0.58,
+            ci_low=8.5,
+            ci_high=11.5,
+            t_critical=4.303,
+            unit="ms",
+        )
+        data = AggregateConfidenceData(
+            confidence_level=0.95,
+            num_runs=3,
+            run_labels=["r1", "r2", "r3"],
+            metrics={"request_latency_avg": metric},
+        )
+        result = loader.get_metric(data, "request_latency_avg")
+        assert result is not None
+        assert result.mean == 10.0
+
+    def test_get_metric_non_existing(self) -> None:
+        """get_metric returns None for a non-existing metric name."""
+        loader = AggregateDataLoader()
+        data = AggregateConfidenceData(
+            confidence_level=0.95,
+            num_runs=1,
+            run_labels=["r1"],
+            metrics={},
+        )
+        assert loader.get_metric(data, "nonexistent") is None
+
+
+# --- Tests for ellipse input validation (ellipse.py) ---
+
+
+class TestEllipseInputValidation:
+    """Unit tests for input validation in compute_ellipse_vertices and axis-aligned variant."""
+
+    def test_compute_ellipse_vertices_n_vertices_lt_3_raises(self) -> None:
+        """compute_ellipse_vertices with n_vertices < 3 raises ValueError."""
+        cov = np.array([[1.0, 0.0], [0.0, 1.0]])
+        with pytest.raises(ValueError, match="n_vertices must be >= 3"):
+            compute_ellipse_vertices(cov, (0.0, 0.0), 0.95, n_vertices=2)
+
+    def test_compute_ellipse_vertices_confidence_below_zero_raises(self) -> None:
+        """compute_ellipse_vertices with confidence_level <= 0 raises ValueError."""
+        cov = np.array([[1.0, 0.0], [0.0, 1.0]])
+        with pytest.raises(ValueError, match="confidence_level must be in"):
+            compute_ellipse_vertices(cov, (0.0, 0.0), 0.0, n_vertices=64)
+
+    def test_compute_ellipse_vertices_confidence_above_one_raises(self) -> None:
+        """compute_ellipse_vertices with confidence_level >= 1 raises ValueError."""
+        cov = np.array([[1.0, 0.0], [0.0, 1.0]])
+        with pytest.raises(ValueError, match="confidence_level must be in"):
+            compute_ellipse_vertices(cov, (0.0, 0.0), 1.0, n_vertices=64)
+
+    def test_axis_aligned_n_vertices_lt_3_raises(self) -> None:
+        """compute_axis_aligned_ellipse_vertices with n_vertices < 3 raises ValueError."""
+        with pytest.raises(ValueError, match="n_vertices must be >= 3"):
+            compute_axis_aligned_ellipse_vertices((0.0, 0.0), 1.0, 1.0, n_vertices=1)
+
+    def test_negative_eigenvalues_clamped_and_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Negative eigenvalues are clamped and a warning is logged."""
+        import logging
+
+        cov = np.array([[1.0, 2.0], [2.0, 1.0]])
+        with caplog.at_level(logging.WARNING, logger="aiperf.plot.geometry.ellipse"):
+            vertices = compute_ellipse_vertices(cov, (0.0, 0.0), 0.95, n_vertices=8)
+        assert len(vertices) == 9  # 8 + 1 closing vertex
+        assert any("Non-positive-definite" in r.message for r in caplog.records)
+
+
+# --- Tests for _build_uncertainty_figure (callbacks.py) ---
+
+
+class TestBuildUncertaintyFigure:
+    """Unit tests for _build_uncertainty_figure in the dashboard callbacks."""
+
+    def test_returns_go_figure(self) -> None:
+        """_build_uncertainty_figure returns a go.Figure."""
+        df = pd.DataFrame(
+            {
+                "x_metric": [1.0, 2.0, 3.0, 10.0, 20.0, 30.0],
+                "y_metric": [10.0, 20.0, 30.0, 100.0, 200.0, 300.0],
+                "concurrency": [1, 1, 1, 4, 4, 4],
+            }
+        )
+        pg = PlotGenerator()
+        fig = _build_uncertainty_figure(
+            df,
+            "x_metric",
+            "y_metric",
+            pg,
+            actual_group_by="concurrency",
+            actual_label_by=None,
+            plot_config_dict={},
+            title="Test",
+            x_label="X",
+            y_label="Y",
+        )
+        assert isinstance(fig, go.Figure)
+
+    def test_invalid_ci_level_defaults_to_095(self) -> None:
+        """ci_level not in {0.90, 0.95, 0.99} defaults to 0.95."""
+        df = pd.DataFrame(
+            {
+                "x_metric": [1.0, 2.0, 3.0],
+                "y_metric": [10.0, 20.0, 30.0],
+                "concurrency": [1, 1, 1],
+            }
+        )
+        pg = PlotGenerator()
+        fig = _build_uncertainty_figure(
+            df,
+            "x_metric",
+            "y_metric",
+            pg,
+            actual_group_by="concurrency",
+            actual_label_by=None,
+            plot_config_dict={"ci_level": 0.80},
+            title="Test",
+            x_label="X",
+            y_label="Y",
+        )
+        assert isinstance(fig, go.Figure)
+
+
+# --- Tests for _build_ellipse_trace covariance path (plot_generator.py) ---
+
+
+class TestBuildEllipseTraceCovariancePath:
+    """Unit tests for _build_ellipse_trace with non-zero cov_xy."""
+
+    def test_covariance_path_produces_rotated_ellipse(self) -> None:
+        """A BenchmarkPoint with non-zero cov_xy uses the covariance path."""
+        point = BenchmarkPoint(
+            x_mean=10.0,
+            y_mean=100.0,
+            x_ci_low=8.0,
+            x_ci_high=12.0,
+            y_ci_low=90.0,
+            y_ci_high=110.0,
+            cov_xy=1.5,
+        )
+        pg = PlotGenerator()
+        data = LatencyThroughputUncertaintyData(points=[point], confidence_level=0.95)
+        fig = pg.create_uncertainty_plot(data)
+        ellipse_traces = [t for t in fig.data if t.fill == "toself"]
+        assert len(ellipse_traces) == 1
+        # Covariance path produces 64 + 1 = 65 vertices
+        assert len(ellipse_traces[0].x) == 65
+
+
+# --- Tests for matplotlib low-n annotation path (matplotlib_uncertainty.py) ---
+
+
+class TestMatplotlibLowNAnnotation:
+    """Unit tests for the low-n dashed ellipse styling in the matplotlib renderer."""
+
+    def test_low_n_ellipse_has_dashed_linestyle(self) -> None:
+        """A point with n_runs=2 produces a dashed ellipse."""
+        data = LatencyThroughputUncertaintyData(
+            points=[
+                BenchmarkPoint(
+                    x_mean=10.0,
+                    y_mean=100.0,
+                    x_ci_low=8.0,
+                    x_ci_high=12.0,
+                    y_ci_low=90.0,
+                    y_ci_high=110.0,
+                    n_runs=2,
+                ),
+            ],
+            confidence_level=0.95,
+        )
+        fig = render_matplotlib_uncertainty(data)
+        ax = fig.axes[0]
+        ellipses = [p for p in ax.patches if isinstance(p, matplotlib.patches.Ellipse)]
+        assert len(ellipses) == 1
+        assert ellipses[0].get_linestyle() == "--"
+        assert ellipses[0].get_alpha() == pytest.approx(0.08)
+        plt.close(fig)
+
+    def test_normal_n_ellipse_has_solid_linestyle(self) -> None:
+        """A point with n_runs=5 produces a solid ellipse."""
+        data = LatencyThroughputUncertaintyData(
+            points=[
+                BenchmarkPoint(
+                    x_mean=10.0,
+                    y_mean=100.0,
+                    x_ci_low=8.0,
+                    x_ci_high=12.0,
+                    y_ci_low=90.0,
+                    y_ci_high=110.0,
+                    n_runs=5,
+                ),
+            ],
+            confidence_level=0.95,
+        )
+        fig = render_matplotlib_uncertainty(data)
+        ax = fig.axes[0]
+        ellipses = [p for p in ax.patches if isinstance(p, matplotlib.patches.Ellipse)]
+        assert len(ellipses) == 1
+        assert ellipses[0].get_linestyle() == "-"
+        assert ellipses[0].get_alpha() == pytest.approx(0.15)
+        plt.close(fig)
