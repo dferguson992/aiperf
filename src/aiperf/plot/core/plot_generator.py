@@ -2133,6 +2133,9 @@ class PlotGenerator:
     def _build_mean_trace(
         self,
         sorted_points: list,
+        *,
+        color: str = NVIDIA_GREEN,
+        name: str = "Mean",
     ) -> go.Scatter:
         """Build the mean-point scatter trace with error bars."""
         n = len(sorted_points)
@@ -2148,8 +2151,8 @@ class PlotGenerator:
             "x": x_vals,
             "y": y_vals,
             "mode": mode,
-            "marker": {"size": 8, "color": NVIDIA_GREEN},
-            "line": {"color": NVIDIA_GREEN, "width": 2},
+            "marker": {"size": 8, "color": color},
+            "line": {"color": color, "width": 2},
             "error_x": {
                 "type": "data",
                 "symmetric": False,
@@ -2162,7 +2165,7 @@ class PlotGenerator:
                 "array": [p.y_ci_high - p.y_mean for p in sorted_points],
                 "arrayminus": [p.y_mean - p.y_ci_low for p in sorted_points],
             },
-            "name": "Mean",
+            "name": name,
             "showlegend": True,
         }
 
@@ -2220,6 +2223,9 @@ class PlotGenerator:
     ) -> go.Figure:
         """Create latency-throughput uncertainty plot with error bars and confidence ellipses.
 
+        Supports multiple series (e.g., different request_count values), each
+        rendered with its own color. Within each series, points are sorted by x_mean.
+
         Args:
             data: Shared data contract with benchmark points and metadata.
 
@@ -2232,15 +2238,29 @@ class PlotGenerator:
         y_label = data.y_label or "Throughput"
         fig.update_layout(self._get_base_layout(title, x_label, y_label))
 
-        if not data.points:
+        all_series = data.get_series()
+        if not all_series:
             return fig
 
-        sorted_points = sorted(data.points, key=lambda p: p.x_mean)
-        fig.add_trace(self._build_mean_trace(sorted_points))
+        # Single series uses NVIDIA green; multi-series uses the palette
+        if len(all_series) == 1:
+            colors = [NVIDIA_GREEN]
+        else:
+            colors = self._get_palette_colors(len(all_series))
+        has_low_n = False
 
-        ellipse_color = NVIDIA_GREEN
-        for point in sorted_points:
-            fig.add_trace(self._build_ellipse_trace(point, ellipse_color))
+        for s, color in zip(all_series, colors, strict=False):
+            sorted_points = sorted(s.points, key=lambda p: p.x_mean)
+            if not sorted_points:
+                continue
+
+            fig.add_trace(
+                self._build_mean_trace(sorted_points, color=color, name=s.name)
+            )
+            for point in sorted_points:
+                fig.add_trace(self._build_ellipse_trace(point, color))
+                if point.n_runs is not None and point.n_runs < 3:
+                    has_low_n = True
 
         level_pct = int(data.confidence_level * 100)
         fig.add_trace(
@@ -2248,19 +2268,19 @@ class PlotGenerator:
                 x=[None],
                 y=[None],
                 mode="markers",
-                marker={"size": 0, "color": ellipse_color},
+                marker={"size": 0, "color": colors[0]},
                 name=f"{level_pct}% Confidence Region",
                 showlegend=True,
             )
         )
 
-        if any(p.n_runs is not None and p.n_runs < 3 for p in sorted_points):
+        if has_low_n:
             fig.add_trace(
                 go.Scatter(
                     x=[None],
                     y=[None],
                     mode="lines",
-                    line={"color": ellipse_color, "width": 1, "dash": "dash"},
+                    line={"color": colors[0], "width": 1, "dash": "dash"},
                     name="Low sample (n < 3)",
                     showlegend=True,
                 )

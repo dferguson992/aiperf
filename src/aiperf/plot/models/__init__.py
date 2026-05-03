@@ -5,9 +5,11 @@
 from aiperf.plot.models.uncertainty import (
     BenchmarkPoint,
     LatencyThroughputUncertaintyData,
+    UncertaintySeries,
 )
 
 __all__ = [
     "BenchmarkPoint",
     "LatencyThroughputUncertaintyData",
+    "UncertaintySeries",
 ]

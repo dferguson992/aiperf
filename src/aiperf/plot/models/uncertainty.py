@@ -59,11 +59,23 @@ class BenchmarkPoint(AIPerfBaseModel):
         return v
 
 
+class UncertaintySeries(AIPerfBaseModel):
+    """A named series of benchmark points for multi-series uncertainty plots."""
+
+    name: str = Field(description="Series display name (e.g., 'request_count=20')")
+    points: list[BenchmarkPoint] = Field(description="Operating points in this series")
+
+
 class LatencyThroughputUncertaintyData(AIPerfBaseModel):
     """Container for all benchmark points and plot metadata."""
 
     points: list[BenchmarkPoint] = Field(
-        description="List of benchmark operating points"
+        default_factory=list,
+        description="List of benchmark operating points (single-series mode)",
+    )
+    series: list[UncertaintySeries] = Field(
+        default_factory=list,
+        description="Named series for multi-series mode (overrides points when non-empty)",
     )
     confidence_level: float = Field(
         default=0.95,
@@ -80,3 +92,11 @@ class LatencyThroughputUncertaintyData(AIPerfBaseModel):
         if v not in {0.90, 0.95, 0.99}:
             raise ValueError("confidence_level must be 0.90, 0.95, or 0.99")
         return v
+
+    def get_series(self) -> list[UncertaintySeries]:
+        """Return series list, wrapping single-series points if needed."""
+        if self.series:
+            return self.series
+        if self.points:
+            return [UncertaintySeries(name="Mean", points=self.points)]
+        return []

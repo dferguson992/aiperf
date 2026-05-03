@@ -296,7 +296,10 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
         self, spec: PlotSpec, data: pd.DataFrame, available_metrics: dict
     ) -> go.Figure:
         """Build LatencyThroughputUncertaintyData from DataFrame and delegate to PlotGenerator."""
-        from aiperf.plot.models.uncertainty import LatencyThroughputUncertaintyData
+        from aiperf.plot.models.uncertainty import (
+            LatencyThroughputUncertaintyData,
+            UncertaintySeries,
+        )
 
         x_metric = next(m for m in spec.metrics if m.axis == "x")
         y_metric = next(m for m in spec.metrics if m.axis == "y")
@@ -305,18 +308,49 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
         if ci_level not in {0.90, 0.95, 0.99}:
             ci_level = 0.95
 
-        group_by = "concurrency" if "concurrency" in data.columns else spec.group_by
-        points = _build_uncertainty_points(
-            data,
-            x_metric.name,
-            y_metric.name,
-            group_col=group_by,
-            label_col=spec.label_by,
-            ci_level=ci_level,
-        )
+        # Series-level grouping (e.g., model or request_count)
+        series_col = spec.group_by
+        if isinstance(series_col, list):
+            series_col = series_col[0] if series_col else None
+
+        # Point-level grouping (operating points within each series)
+        point_col = "concurrency" if "concurrency" in data.columns else None
+
+        # Build series
+        series_list: list[UncertaintySeries] = []
+        if series_col and series_col in data.columns and series_col != point_col:
+            for series_val in sorted(data[series_col].dropna().unique()):
+                series_df = data[data[series_col] == series_val]
+                points = _build_uncertainty_points(
+                    series_df,
+                    x_metric.name,
+                    y_metric.name,
+                    group_col=point_col,
+                    label_col=spec.label_by,
+                    ci_level=ci_level,
+                )
+                if points:
+                    series_list.append(
+                        UncertaintySeries(
+                            name=str(series_val),
+                            points=points,
+                        )
+                    )
+        else:
+            # Single series — group by concurrency for operating points
+            points = _build_uncertainty_points(
+                data,
+                x_metric.name,
+                y_metric.name,
+                group_col=point_col or series_col,
+                label_col=spec.label_by,
+                ci_level=ci_level,
+            )
+            if points:
+                series_list.append(UncertaintySeries(name="Mean", points=points))
 
         uncertainty_data = LatencyThroughputUncertaintyData(
-            points=points,
+            series=series_list,
             confidence_level=ci_level,
             title=spec.title,
             x_label=self._get_metric_label(
@@ -325,7 +359,7 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
             y_label=self._get_metric_label(
                 y_metric.name, y_metric.stat or "avg", available_metrics
             ),
-            group_by=group_by,
+            group_by=spec.group_by,
         )
 
         return self.plot_generator.create_uncertainty_plot(uncertainty_data)

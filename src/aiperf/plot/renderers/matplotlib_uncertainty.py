@@ -91,6 +91,9 @@ def _apply_theme(
 def _add_mean_line_and_errorbars(
     ax: plt.Axes,
     sorted_points: list,
+    *,
+    color: str = NVIDIA_GREEN,
+    label: str = "Mean",
 ) -> None:
     """Add mean-point line with markers and asymmetric crosshair error bars."""
     x_vals = [p.x_mean for p in sorted_points]
@@ -100,12 +103,12 @@ def _add_mean_line_and_errorbars(
     ax.plot(
         x_vals,
         y_vals,
-        color=NVIDIA_GREEN,
+        color=color,
         marker="o",
         markersize=6,
         linestyle=linestyle,
         linewidth=2,
-        label="Mean",
+        label=label,
         zorder=3,
     )
     ax.errorbar(
@@ -120,7 +123,7 @@ def _add_mean_line_and_errorbars(
             [p.y_ci_high - p.y_mean for p in sorted_points],
         ],
         fmt="none",
-        ecolor=NVIDIA_GREEN,
+        ecolor=color,
         elinewidth=1,
         capsize=3,
         alpha=0.7,
@@ -203,24 +206,39 @@ def render_matplotlib_uncertainty(
     y_label = data.y_label or "Throughput"
     _apply_theme(fig, ax, colors, title=title, x_label=x_label, y_label=y_label)
 
-    if not data.points:
+    all_series = data.get_series()
+    if not all_series:
         return fig
 
-    sorted_points = sorted(data.points, key=lambda p: p.x_mean)
-    _add_mean_line_and_errorbars(ax, sorted_points)
-    _add_ellipses(ax, sorted_points, data.confidence_level)
+    # Generate distinct colors for each series
+    import matplotlib.cm as cm
 
-    for point in sorted_points:
-        if point.label is not None:
-            ax.annotate(
-                point.label,
-                (point.x_mean, point.y_mean),
-                textcoords="offset points",
-                xytext=(0, 10),
-                ha="center",
-                color=colors["text"],
-                fontsize=8,
-            )
+    cmap = cm.get_cmap("tab10")
+    series_colors = [
+        f"#{int(cmap(i)[0] * 255):02x}{int(cmap(i)[1] * 255):02x}{int(cmap(i)[2] * 255):02x}"
+        if len(all_series) > 1
+        else NVIDIA_GREEN
+        for i in range(len(all_series))
+    ]
+
+    for s, s_color in zip(all_series, series_colors, strict=False):
+        sorted_points = sorted(s.points, key=lambda p: p.x_mean)
+        if not sorted_points:
+            continue
+        _add_mean_line_and_errorbars(ax, sorted_points, color=s_color, label=s.name)
+        _add_ellipses(ax, sorted_points, data.confidence_level)
+
+        for point in sorted_points:
+            if point.label is not None:
+                ax.annotate(
+                    point.label,
+                    (point.x_mean, point.y_mean),
+                    textcoords="offset points",
+                    xytext=(0, 10),
+                    ha="center",
+                    color=colors["text"],
+                    fontsize=8,
+                )
 
     ax.legend(
         facecolor=colors["paper"], edgecolor=colors["border"], labelcolor=colors["text"]
