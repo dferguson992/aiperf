@@ -304,7 +304,7 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
         x_metric = next(m for m in spec.metrics if m.axis == "x")
         y_metric = next(m for m in spec.metrics if m.axis == "y")
 
-        ci_level = getattr(spec, "ci_level", 0.95)
+        ci_level = spec.ci_level
         if ci_level not in {0.90, 0.95, 0.99}:
             ci_level = 0.95
 

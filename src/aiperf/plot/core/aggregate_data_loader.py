@@ -52,6 +52,10 @@ class AggregateDataLoader(AIPerfLoggerMixin):
         Searches for aggregate/profile_export_aiperf_aggregate.json.
         Returns None if not found or malformed (logs warning, never raises).
 
+        Note: Uses synchronous file I/O. The plot pipeline is fully synchronous
+        (PlotController, MultiRunPNGExporter, dashboard callbacks) with no async
+        callers, so async I/O would add complexity without benefit.
+
         Args:
             artifact_dir: Path to the artifact directory.
 

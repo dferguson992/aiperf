@@ -29,6 +29,7 @@ from aiperf.plot.core.aggregate_data_loader import (
     ConfidenceMetricData,
 )
 from aiperf.plot.core.plot_generator import PlotGenerator
+from aiperf.plot.core.plot_specs import DataSource, MetricSpec, PlotSpec
 from aiperf.plot.dashboard.builder import _build_multi_run_plot_types
 from aiperf.plot.dashboard.callbacks import _build_uncertainty_figure
 from aiperf.plot.exporters import export_uncertainty_matplotlib
@@ -1989,6 +1990,11 @@ class TestBuildUncertaintyFigure:
             y_label="Y",
         )
         assert isinstance(fig, go.Figure)
+        # Verify the fallback produced a 95% legend entry (not 80%)
+        legend_names = [t.name for t in fig.data if t.name and "Confidence" in t.name]
+        assert any("95%" in name for name in legend_names), (
+            f"Expected 95% fallback, got legend names: {legend_names}"
+        )
 
 
 # --- Tests for _build_ellipse_trace covariance path (plot_generator.py) ---
@@ -1997,24 +2003,45 @@ class TestBuildUncertaintyFigure:
 class TestBuildEllipseTraceCovariancePath:
     """Unit tests for _build_ellipse_trace with non-zero cov_xy."""
 
-    def test_covariance_path_produces_rotated_ellipse(self) -> None:
-        """A BenchmarkPoint with non-zero cov_xy uses the covariance path."""
-        point = BenchmarkPoint(
-            x_mean=10.0,
-            y_mean=100.0,
-            x_ci_low=8.0,
-            x_ci_high=12.0,
-            y_ci_low=90.0,
-            y_ci_high=110.0,
-            cov_xy=1.5,
-        )
+    def test_covariance_path_produces_different_geometry_than_axis_aligned(
+        self,
+    ) -> None:
+        """A BenchmarkPoint with non-zero cov_xy produces a rotated ellipse distinct from axis-aligned."""
+        base_kwargs = {
+            "x_mean": 10.0,
+            "y_mean": 100.0,
+            "x_ci_low": 8.0,
+            "x_ci_high": 12.0,
+            "y_ci_low": 90.0,
+            "y_ci_high": 110.0,
+        }
+        rotated_point = BenchmarkPoint(**base_kwargs, cov_xy=1.5)
+        aligned_point = BenchmarkPoint(**base_kwargs, cov_xy=None)
+
         pg = PlotGenerator()
-        data = LatencyThroughputUncertaintyData(points=[point], confidence_level=0.95)
-        fig = pg.create_uncertainty_plot(data)
-        ellipse_traces = [t for t in fig.data if t.fill == "toself"]
-        assert len(ellipse_traces) == 1
-        # Covariance path produces 64 + 1 = 65 vertices
-        assert len(ellipse_traces[0].x) == 65
+        rotated_fig = pg.create_uncertainty_plot(
+            LatencyThroughputUncertaintyData(
+                points=[rotated_point], confidence_level=0.95
+            )
+        )
+        aligned_fig = pg.create_uncertainty_plot(
+            LatencyThroughputUncertaintyData(
+                points=[aligned_point], confidence_level=0.95
+            )
+        )
+
+        rotated_traces = [t for t in rotated_fig.data if t.fill == "toself"]
+        aligned_traces = [t for t in aligned_fig.data if t.fill == "toself"]
+        assert len(rotated_traces) == 1
+        assert len(aligned_traces) == 1
+        assert len(rotated_traces[0].x) == 65
+
+        # Vertices should differ — covariance rotates the ellipse
+        rotated_xs = list(rotated_traces[0].x)
+        aligned_xs = list(aligned_traces[0].x)
+        assert rotated_xs != aligned_xs, (
+            "Covariance ellipse should differ from axis-aligned"
+        )
 
 
 # --- Tests for matplotlib low-n annotation path (matplotlib_uncertainty.py) ---
@@ -2070,3 +2097,221 @@ class TestMatplotlibLowNAnnotation:
         assert ellipses[0].get_linestyle() == "-"
         assert ellipses[0].get_alpha() == pytest.approx(0.15)
         plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Coverage tests for multi_run_handlers.py and callbacks.py
+# ---------------------------------------------------------------------------
+
+
+def _make_uncertainty_spec(
+    *,
+    group_by: str | list[str] | None = "model",
+    label_by: str | None = "concurrency",
+) -> PlotSpec:
+    """Build a PlotSpec for latency-throughput uncertainty tests."""
+    return PlotSpec(
+        name="test",
+        plot_type=PlotType.LATENCY_THROUGHPUT_UNCERTAINTY,
+        metrics=[
+            MetricSpec(
+                name="request_latency",
+                source=DataSource.AGGREGATED,
+                axis="x",
+                stat="avg",
+            ),
+            MetricSpec(
+                name="output_token_throughput",
+                source=DataSource.AGGREGATED,
+                axis="y",
+                stat="avg",
+            ),
+        ],
+        label_by=label_by,
+        group_by=group_by,
+    )
+
+
+class TestLatencyThroughputUncertaintyHandlerCreatePlot:
+    """Unit tests for LatencyThroughputUncertaintyHandler.create_plot."""
+
+    def test_create_plot_returns_figure(self) -> None:
+        """create_plot with basic DataFrame returns a go.Figure."""
+        df = pd.DataFrame(
+            {
+                "request_latency": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                "output_token_throughput": [10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+                "concurrency": [1, 1, 1, 4, 4, 4],
+                "model": ["a", "a", "a", "a", "a", "a"],
+            }
+        )
+        spec = _make_uncertainty_spec()
+        handler = LatencyThroughputUncertaintyHandler(PlotGenerator())
+        fig = handler.create_plot(spec, df, {})
+        assert isinstance(fig, go.Figure)
+
+    def test_create_plot_multi_series(self) -> None:
+        """create_plot with series_col != point_col produces multiple series."""
+        df = pd.DataFrame(
+            {
+                "request_latency": [1.0, 2.0, 10.0, 20.0],
+                "output_token_throughput": [10.0, 20.0, 100.0, 200.0],
+                "concurrency": [1, 1, 1, 1],
+                "model": ["gpt", "gpt", "llama", "llama"],
+            }
+        )
+        spec = _make_uncertainty_spec(group_by="model")
+        handler = LatencyThroughputUncertaintyHandler(PlotGenerator())
+        fig = handler.create_plot(spec, df, {})
+        assert isinstance(fig, go.Figure)
+        # Two models should produce traces for each series
+        assert len(fig.data) > 1
+
+    def test_create_plot_list_group_by(self) -> None:
+        """create_plot with list-valued group_by on the spec."""
+        df = pd.DataFrame(
+            {
+                "request_latency": [1.0, 2.0, 3.0, 4.0],
+                "output_token_throughput": [10.0, 20.0, 30.0, 40.0],
+                "concurrency": [1, 1, 2, 2],
+                "model": ["a", "a", "a", "a"],
+            }
+        )
+        spec = _make_uncertainty_spec(group_by=["model"])
+        handler = LatencyThroughputUncertaintyHandler(PlotGenerator())
+        fig = handler.create_plot(spec, df, {})
+        assert isinstance(fig, go.Figure)
+
+    def test_can_handle_true_when_columns_exist(self) -> None:
+        """can_handle returns True when all metric columns exist."""
+        df = pd.DataFrame(
+            {
+                "request_latency": [1.0],
+                "output_token_throughput": [10.0],
+            }
+        )
+        spec = _make_uncertainty_spec()
+        handler = LatencyThroughputUncertaintyHandler(PlotGenerator())
+        assert handler.can_handle(spec, df) is True
+
+    def test_can_handle_false_when_column_missing(self) -> None:
+        """can_handle returns False when a metric column is missing."""
+        df = pd.DataFrame({"request_latency": [1.0]})
+        spec = _make_uncertainty_spec()
+        handler = LatencyThroughputUncertaintyHandler(PlotGenerator())
+        assert handler.can_handle(spec, df) is False
+
+
+class TestBuildUncertaintyPointsAdditional:
+    """Additional unit tests for _build_uncertainty_points edge cases."""
+
+    def test_no_group_col_single_group(self) -> None:
+        """group_col=None treats all rows as a single group."""
+        df = pd.DataFrame(
+            {
+                "x": [1.0, 2.0, 3.0],
+                "y": [10.0, 20.0, 30.0],
+            }
+        )
+        points = _build_uncertainty_points(
+            df, "x", "y", group_col=None, label_col=None, ci_level=0.95
+        )
+        assert len(points) == 1
+        assert points[0].n_runs == 3
+        assert points[0].x_mean == pytest.approx(2.0)
+
+    def test_empty_dataframe(self) -> None:
+        """Empty DataFrame produces no points."""
+        df = pd.DataFrame({"x": pd.Series(dtype=float), "y": pd.Series(dtype=float)})
+        points = _build_uncertainty_points(
+            df, "x", "y", group_col=None, label_col=None, ci_level=0.95
+        )
+        assert len(points) == 0
+
+
+class TestBuildUncertaintyFigureAdditional:
+    """Additional unit tests for _build_uncertainty_figure in callbacks.py."""
+
+    def test_concurrency_column_preferred_for_grouping(self) -> None:
+        """When concurrency column is present, it is used for grouping."""
+        df = pd.DataFrame(
+            {
+                "x_metric": [1.0, 2.0, 3.0, 10.0, 20.0, 30.0],
+                "y_metric": [10.0, 20.0, 30.0, 100.0, 200.0, 300.0],
+                "concurrency": [1, 1, 1, 4, 4, 4],
+                "other_group": ["a", "a", "a", "b", "b", "b"],
+            }
+        )
+        pg = PlotGenerator()
+        fig = _build_uncertainty_figure(
+            df,
+            "x_metric",
+            "y_metric",
+            pg,
+            actual_group_by="other_group",
+            actual_label_by=None,
+            plot_config_dict={},
+            title="Test",
+            x_label="X",
+            y_label="Y",
+        )
+        assert isinstance(fig, go.Figure)
+        # Should have 2 groups (concurrency 1 and 4)
+        mean_trace = _find_plotly_mean_trace(fig)
+        assert mean_trace is not None
+        assert len(mean_trace.x) == 2
+
+    def test_no_concurrency_falls_back_to_actual_group_by(self) -> None:
+        """Without concurrency column, falls back to actual_group_by."""
+        df = pd.DataFrame(
+            {
+                "x_metric": [1.0, 2.0, 10.0, 20.0],
+                "y_metric": [10.0, 20.0, 100.0, 200.0],
+                "model": ["a", "a", "b", "b"],
+            }
+        )
+        pg = PlotGenerator()
+        fig = _build_uncertainty_figure(
+            df,
+            "x_metric",
+            "y_metric",
+            pg,
+            actual_group_by="model",
+            actual_label_by=None,
+            plot_config_dict={},
+            title="Test",
+            x_label="X",
+            y_label="Y",
+        )
+        assert isinstance(fig, go.Figure)
+        mean_trace = _find_plotly_mean_trace(fig)
+        assert mean_trace is not None
+        assert len(mean_trace.x) == 2
+
+    def test_valid_ci_level_090_shows_in_legend(self) -> None:
+        """ci_level=0.90 produces a legend entry with '90%'."""
+        df = pd.DataFrame(
+            {
+                "x_metric": [1.0, 2.0, 3.0],
+                "y_metric": [10.0, 20.0, 30.0],
+                "concurrency": [1, 1, 1],
+            }
+        )
+        pg = PlotGenerator()
+        fig = _build_uncertainty_figure(
+            df,
+            "x_metric",
+            "y_metric",
+            pg,
+            actual_group_by=None,
+            actual_label_by=None,
+            plot_config_dict={"ci_level": 0.90},
+            title="Test",
+            x_label="X",
+            y_label="Y",
+        )
+        assert isinstance(fig, go.Figure)
+        legend_names = [t.name for t in fig.data if t.name and "Confidence" in t.name]
+        assert any("90%" in name for name in legend_names), (
+            f"Expected 90% in legend, got: {legend_names}"
+        )
