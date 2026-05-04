@@ -344,9 +344,10 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
                     ci_level=ci_level,
                 )
                 if points:
+                    series_name = f"{series_col} = {series_val}"
                     series_list.append(
                         UncertaintySeries(
-                            name=str(series_val),
+                            name=series_name,
                             points=points,
                         )
                     )
