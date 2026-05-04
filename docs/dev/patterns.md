@@ -206,6 +206,37 @@ data = LatencyThroughputUncertaintyData(
 )
 ```
 
+### Multi-Series Data Contract
+
+```python
+from aiperf.plot.models.uncertainty import (
+    BenchmarkPoint, LatencyThroughputUncertaintyData, UncertaintySeries,
+)
+
+# One series per experiment variant (e.g., request_count=20 vs 50).
+# When `series` is non-empty it overrides `points`; see get_series().
+data = LatencyThroughputUncertaintyData(
+    series=[
+        UncertaintySeries(name="request_count=20", points=[
+            BenchmarkPoint(x_mean=5.0, y_mean=50.0, x_ci_low=4.0, x_ci_high=6.0,
+                           y_ci_low=45.0, y_ci_high=55.0, label="c=2", n_runs=10),
+            BenchmarkPoint(x_mean=15.0, y_mean=120.0, x_ci_low=13.0, x_ci_high=17.0,
+                           y_ci_low=110.0, y_ci_high=130.0, label="c=10", n_runs=8),
+        ]),
+        UncertaintySeries(name="request_count=50", points=[
+            BenchmarkPoint(x_mean=6.0, y_mean=48.0, x_ci_low=4.5, x_ci_high=7.5,
+                           y_ci_low=42.0, y_ci_high=54.0, label="c=2", n_runs=10),
+            BenchmarkPoint(x_mean=18.0, y_mean=110.0, x_ci_low=15.0, x_ci_high=21.0,
+                           y_ci_low=100.0, y_ci_high=120.0, label="c=10", n_runs=10),
+        ]),
+    ],
+    confidence_level=0.95,
+    title="Latency vs Throughput by Request Count",
+    x_label="Latency (ms)",
+    y_label="Throughput (tok/s)",
+)
+```
+
 ### Plotly Renderer (interactive + Kaleido PNG)
 
 ```python

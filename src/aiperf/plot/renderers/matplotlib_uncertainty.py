@@ -8,7 +8,6 @@ import matplotlib.figure
 import matplotlib.patches
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import chi2
 
 from aiperf.plot.constants import (
     DARK_THEME_COLORS,
@@ -29,6 +28,16 @@ def _ellipse_params_from_covariance(
 ) -> tuple[float, float, float]:
     """Compute Ellipse width, height, and angle from covariance.
 
+    No chi-square scaling is applied because the input half-widths are already
+    confidence-scaled (t_crit * SE) by the handler. This matches the Plotly
+    renderer's _build_ellipse_trace and _ellipse_params_axis_aligned.
+
+    Args:
+        point_cov_xy: Sample covariance between x and y metrics.
+        x_half_width: Pre-scaled CI half-width for x axis.
+        y_half_width: Pre-scaled CI half-width for y axis.
+        confidence_level: Retained for API compatibility (unused).
+
     Returns:
         (width, height, angle_degrees) for matplotlib.patches.Ellipse.
     """
@@ -39,10 +48,8 @@ def _ellipse_params_from_covariance(
     eigenvalues, eigenvectors = np.linalg.eigh(cov)
     eigenvalues = np.maximum(eigenvalues, _EIGENVALUE_FLOOR)
 
-    scale = math.sqrt(chi2.ppf(confidence_level, df=2))
-    # width/height are full diameters (2 * semi-axis)
-    width = 2.0 * scale * math.sqrt(float(eigenvalues[1]))
-    height = 2.0 * scale * math.sqrt(float(eigenvalues[0]))
+    width = 2.0 * math.sqrt(float(eigenvalues[1]))
+    height = 2.0 * math.sqrt(float(eigenvalues[0]))
     angle_rad = math.atan2(float(eigenvectors[1, 1]), float(eigenvectors[0, 1]))
     angle_deg = math.degrees(angle_rad)
 
@@ -55,11 +62,10 @@ def _ellipse_params_axis_aligned(
 ) -> tuple[float, float, float]:
     """Compute Ellipse width, height for axis-aligned case.
 
-    No chi-square scaling is applied here because the input half-widths are
-    already confidence-scaled (t_crit * SE) by the handler. Applying chi2.ppf
-    would double-scale the ellipse. The covariance path in
-    _ellipse_params_from_covariance uses chi-square scaling because it
-    re-derives semi-axes from eigendecomposition of a covariance matrix.
+    No chi-square scaling is applied because the input half-widths are already
+    confidence-scaled (t_crit * SE) by the handler. Both this function and
+    _ellipse_params_from_covariance use the same contract: pre-scaled inputs,
+    no additional scaling.
 
     Returns:
         (width, height, 0.0) — full diameters, zero rotation.
@@ -135,6 +141,8 @@ def _add_ellipses(
     ax: plt.Axes,
     sorted_points: list,
     confidence_level: float,
+    *,
+    color: str = NVIDIA_GREEN,
 ) -> None:
     """Add confidence ellipse patches for each point."""
     level_pct = int(confidence_level * 100)
@@ -174,8 +182,8 @@ def _add_ellipses(
                 width=width,
                 height=height,
                 angle=angle,
-                facecolor=NVIDIA_GREEN,
-                edgecolor=NVIDIA_GREEN,
+                facecolor=color,
+                edgecolor=color,
                 alpha=0.08 if is_low_n else 0.15,
                 linewidth=1,
                 linestyle="--" if is_low_n else "-",
@@ -211,9 +219,9 @@ def render_matplotlib_uncertainty(
         return fig
 
     # Generate distinct colors for each series
-    import matplotlib.cm as cm
+    import matplotlib
 
-    cmap = cm.get_cmap("tab10")
+    cmap = matplotlib.colormaps["tab10"]
     series_colors = [
         f"#{int(cmap(i)[0] * 255):02x}{int(cmap(i)[1] * 255):02x}{int(cmap(i)[2] * 255):02x}"
         if len(all_series) > 1
@@ -226,7 +234,7 @@ def render_matplotlib_uncertainty(
         if not sorted_points:
             continue
         _add_mean_line_and_errorbars(ax, sorted_points, color=s_color, label=s.name)
-        _add_ellipses(ax, sorted_points, data.confidence_level)
+        _add_ellipses(ax, sorted_points, data.confidence_level, color=s_color)
 
         for point in sorted_points:
             if point.label is not None:

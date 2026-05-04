@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 from aiperf.plot.constants import DEFAULT_PERCENTILE
 from aiperf.plot.core.plot_generator import PlotGenerator
 from aiperf.plot.core.plot_specs import PlotSpec
+from aiperf.plot.models.uncertainty import BenchmarkPoint
 
 
 class BaseMultiRunHandler:
@@ -222,12 +223,25 @@ def _build_uncertainty_points(
     group_col: str | list[str] | None,
     label_col: str | None,
     ci_level: float,
-) -> list:
-    """Build BenchmarkPoint list from grouped DataFrame with t-distribution CIs."""
+) -> list[BenchmarkPoint]:
+    """Build a list of BenchmarkPoint from a grouped DataFrame using t-distribution CIs.
+
+    For each group bucket, computes (mean, ci_half) for x and y and constructs
+    one BenchmarkPoint. CIs use a Student-t critical value at ci_level with
+    df = n - 1; for n < 2, CI half-widths collapse to 0.
+
+    Args:
+        data: DataFrame with metric columns.
+        x_col: Column name for x-axis metric.
+        y_col: Column name for y-axis metric.
+        group_col: Column name OR list of candidate column names. If a list is
+            given, the first name that exists in data.columns is used; if none
+            match (or None), all rows form a single bucket.
+        label_col: Optional column whose mode-per-bucket becomes BenchmarkPoint.label.
+        ci_level: Confidence level in (0, 1), typically 0.90, 0.95, or 0.99.
+    """
     import numpy as np
     from scipy import stats as scipy_stats
-
-    from aiperf.plot.models.uncertainty import BenchmarkPoint
 
     # Normalize list-valued group_col to a single column name
     if isinstance(group_col, list):

@@ -34,28 +34,36 @@ class BenchmarkPoint(AIPerfBaseModel):
     @classmethod
     def x_ci_low_le_mean(cls, v: float, info: ValidationInfo) -> float:
         if "x_mean" in info.data and v > info.data["x_mean"]:
-            raise ValueError("x_ci_low must be <= x_mean")
+            raise ValueError(
+                f"x_ci_low ({v}) must be <= x_mean ({info.data['x_mean']})"
+            )
         return v
 
     @field_validator("x_ci_high")
     @classmethod
     def x_ci_high_ge_mean(cls, v: float, info: ValidationInfo) -> float:
         if "x_mean" in info.data and v < info.data["x_mean"]:
-            raise ValueError("x_ci_high must be >= x_mean")
+            raise ValueError(
+                f"x_ci_high ({v}) must be >= x_mean ({info.data['x_mean']})"
+            )
         return v
 
     @field_validator("y_ci_low")
     @classmethod
     def y_ci_low_le_mean(cls, v: float, info: ValidationInfo) -> float:
         if "y_mean" in info.data and v > info.data["y_mean"]:
-            raise ValueError("y_ci_low must be <= y_mean")
+            raise ValueError(
+                f"y_ci_low ({v}) must be <= y_mean ({info.data['y_mean']})"
+            )
         return v
 
     @field_validator("y_ci_high")
     @classmethod
     def y_ci_high_ge_mean(cls, v: float, info: ValidationInfo) -> float:
         if "y_mean" in info.data and v < info.data["y_mean"]:
-            raise ValueError("y_ci_high must be >= y_mean")
+            raise ValueError(
+                f"y_ci_high ({v}) must be >= y_mean ({info.data['y_mean']})"
+            )
         return v
 
 
@@ -90,7 +98,7 @@ class LatencyThroughputUncertaintyData(AIPerfBaseModel):
     @classmethod
     def validate_confidence_level(cls, v: float) -> float:
         if v not in {0.90, 0.95, 0.99}:
-            raise ValueError("confidence_level must be 0.90, 0.95, or 0.99")
+            raise ValueError(f"confidence_level must be 0.90, 0.95, or 0.99 (got {v})")
         return v
 
     def get_series(self) -> list[UncertaintySeries]:
