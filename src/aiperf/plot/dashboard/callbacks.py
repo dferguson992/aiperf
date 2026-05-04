@@ -149,23 +149,51 @@ def _build_uncertainty_figure(
 ) -> go.Figure:
     """Build an uncertainty figure from grouped DataFrame with t-based CIs."""
     from aiperf.plot.handlers.multi_run_handlers import _build_uncertainty_points
-    from aiperf.plot.models.uncertainty import LatencyThroughputUncertaintyData
+    from aiperf.plot.models.uncertainty import (
+        LatencyThroughputUncertaintyData,
+        UncertaintySeries,
+    )
 
     ci_level = plot_config_dict.get("ci_level", 0.95)
     if ci_level not in {0.90, 0.95, 0.99}:
         ci_level = 0.95
 
-    group_col = "concurrency" if "concurrency" in df.columns else actual_group_by
-    points = _build_uncertainty_points(
-        df,
-        x_metric,
-        y_metric,
-        group_col=group_col,
-        label_col=actual_label_by,
-        ci_level=ci_level,
-    )
+    point_col = "concurrency" if "concurrency" in df.columns else None
+    series_col = actual_group_by if actual_group_by != point_col else None
+
+    series_list: list[UncertaintySeries] = []
+    if series_col and series_col in df.columns:
+        for series_val in sorted(df[series_col].dropna().unique()):
+            series_df = df[df[series_col] == series_val]
+            points = _build_uncertainty_points(
+                series_df,
+                x_metric,
+                y_metric,
+                group_col=point_col,
+                label_col=actual_label_by,
+                ci_level=ci_level,
+            )
+            if points:
+                series_list.append(
+                    UncertaintySeries(
+                        name=f"{series_col} = {series_val}",
+                        points=points,
+                    )
+                )
+    else:
+        points = _build_uncertainty_points(
+            df,
+            x_metric,
+            y_metric,
+            group_col=point_col or actual_group_by,
+            label_col=actual_label_by,
+            ci_level=ci_level,
+        )
+        if points:
+            series_list.append(UncertaintySeries(name="Mean", points=points))
+
     uncertainty_data = LatencyThroughputUncertaintyData(
-        points=points,
+        series=series_list,
         confidence_level=ci_level,
         title=title,
         x_label=x_label,
