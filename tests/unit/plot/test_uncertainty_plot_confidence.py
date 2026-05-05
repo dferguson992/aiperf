@@ -2073,7 +2073,7 @@ class TestBuildUncertaintyFigureAdditional:
     """Additional unit tests for _build_uncertainty_figure in callbacks.py."""
 
     def test_concurrency_column_preferred_for_grouping(self) -> None:
-        """When concurrency column is present, it is used for grouping."""
+        """When concurrency column is present, it is used for point-level grouping."""
         df = pd.DataFrame(
             {
                 "x_metric": [1.0, 2.0, 3.0, 10.0, 20.0, 30.0],
@@ -2096,13 +2096,14 @@ class TestBuildUncertaintyFigureAdditional:
             y_label="Y",
         )
         assert isinstance(fig, go.Figure)
-        # Should have 2 groups (concurrency 1 and 4)
-        mean_trace = _find_plotly_mean_trace(fig)
-        assert mean_trace is not None
-        assert len(mean_trace.x) == 2
+        # 2 series (other_group a and b), each with 1 concurrency point
+        mean_traces = [
+            t for t in fig.data if t.error_x is not None and t.error_x.array is not None
+        ]
+        assert len(mean_traces) == 2
 
     def test_no_concurrency_falls_back_to_actual_group_by(self) -> None:
-        """Without concurrency column, falls back to actual_group_by."""
+        """Without concurrency column, actual_group_by becomes the series key."""
         df = pd.DataFrame(
             {
                 "x_metric": [1.0, 2.0, 10.0, 20.0],
@@ -2124,9 +2125,11 @@ class TestBuildUncertaintyFigureAdditional:
             y_label="Y",
         )
         assert isinstance(fig, go.Figure)
-        mean_trace = _find_plotly_mean_trace(fig)
-        assert mean_trace is not None
-        assert len(mean_trace.x) == 2
+        # No concurrency → model becomes series key → 2 series, 1 point each
+        mean_traces = [
+            t for t in fig.data if t.error_x is not None and t.error_x.array is not None
+        ]
+        assert len(mean_traces) == 2
 
     def test_valid_ci_level_090_shows_in_legend(self) -> None:
         """ci_level=0.90 produces a legend entry with '90%'."""
