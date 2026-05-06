@@ -258,6 +258,7 @@ def _build_uncertainty_points(
         group_df = (
             data[data[group_col] == group] if group is not None and group_col else data
         )
+        group_df = group_df.dropna(subset=[x_col, y_col])
         if group_df.empty:
             continue
 
@@ -334,7 +335,7 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
         # Build series
         series_list: list[UncertaintySeries] = []
         if series_col and series_col in data.columns and series_col != point_col:
-            for series_val in sorted(data[series_col].dropna().unique()):
+            for series_val in sorted(data[series_col].dropna().unique(), key=str):
                 series_df = data[data[series_col] == series_val]
                 points = _build_uncertainty_points(
                     series_df,
