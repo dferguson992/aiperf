@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """
@@ -374,7 +375,7 @@ class LatencyThroughputUncertaintyHandler(BaseMultiRunHandler):
             y_label=self._get_metric_label(
                 y_metric.name, y_metric.stat or "avg", available_metrics
             ),
-            group_by=spec.group_by,
+            group_by=series_col,
         )
 
         return self.plot_generator.create_uncertainty_plot(uncertainty_data)

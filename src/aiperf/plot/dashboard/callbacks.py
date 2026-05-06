@@ -163,7 +163,7 @@ def _build_uncertainty_figure(
 
     series_list: list[UncertaintySeries] = []
     if series_col and series_col in df.columns:
-        for series_val in sorted(df[series_col].dropna().unique()):
+        for series_val in sorted(df[series_col].dropna().unique(), key=str):
             series_df = df[df[series_col] == series_val]
             points = _build_uncertainty_points(
                 series_df,

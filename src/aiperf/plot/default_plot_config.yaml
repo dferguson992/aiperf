@@ -27,6 +27,7 @@ visualization:
     - pareto_curve_throughput_per_gpu_vs_latency
     - pareto_curve_throughput_per_gpu_vs_interactivity
     - ttft_vs_throughput
+    - latency_throughput_uncertainty
 
   # =============================================================================
   # SINGLE-RUN ANALYSIS: Default plots for analyzing one run over time
